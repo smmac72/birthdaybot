@@ -1,0 +1,11 @@
+version: '3'
+
+services:
+  birthday-bot:
+    build: .
+    container_name: telegram-birthday-bot
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Europe/Moscow
+    restart: unless-stopped
