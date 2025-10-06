@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import aiosqlite
+import asyncio
 
 from telegram.ext import Application, ContextTypes
 
@@ -471,3 +472,34 @@ class NotifService:
     async def debug_followers(self, person_id: int) -> str:
         folks = await self._followers_union(person_id, None)
         return f"followers for {person_id}: {len(folks)} -> {sorted(folks)}"
+
+    async def schedule_daily_cleanup(self, at_hour: int = 4) -> None:
+        # run daily db cleanup for notifications_sent table
+        jq = getattr(self.app, "job_queue", None)
+        if not jq:
+            self.log.info("job queue missing, skip daily cleanup")
+            return
+
+        for old in jq.get_jobs_by_name("daily_notif_cleanup"):
+            try:
+                old.schedule_removal()
+            except Exception:
+                pass
+
+        # same tz logic as refresh
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(getattr(config, "DEFAULT_TZ", "UTC"))
+        except Exception:
+            tz = dt.timezone.utc
+
+        jq.run_daily(self._daily_cleanup_job, time=dt.time(hour=at_hour, tzinfo=tz), name="daily_notif_cleanup")
+        self.log.info("daily cleanup scheduled at %02d:00", at_hour)
+
+    async def _daily_cleanup_job(self, _context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            removed = await self._cleanup_sent(keep_days=400)
+            if removed:
+                self.log.info("cleanup: removed %s old notification marks", removed)
+        except Exception as e:
+            self.log.exception("daily cleanup failed: %s", e)

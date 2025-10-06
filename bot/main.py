@@ -321,6 +321,7 @@ def build_application() -> Application:
             horizon = getattr(config, "SCHEDULE_HORIZON_DAYS", 7)
             await notif.schedule_all(horizon_days=horizon)
             await notif.schedule_daily_refresh(at_hour=3)
+            await notif.schedule_daily_cleanup(at_hour=4)
             log.info("birthday notifications scheduled and daily refresh set")
         except Exception as e:  # pragma: no cover
             log.exception("failed to schedule notifications: %s", e)

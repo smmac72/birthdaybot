@@ -307,6 +307,7 @@ class GroupsHandler:
                 gid, prof.get("user_id"), prof.get("username"),
                 prof.get("birth_day"), prof.get("birth_month"), prof.get("birth_year"),
             )
+            notif = context.application.bot_data.get("notif_service")
             if notif:
                 try:
                     await notif.reschedule_for_person(prof.get("user_id"), prof.get("username"))
@@ -368,11 +369,13 @@ class GroupsHandler:
 
         # reschedule for person if id known (priority item 1)
         notif = context.application.bot_data.get("notif_service")
-        if ok and target_id and notif:
-            try:
-                await notif.reschedule_for_person(target_id)
-            except Exception as e:
-                self.log.exception("reschedule after delete member failed: %s", e)
+        if ok and target_id:
+            notif = context.application.bot_data.get("notif_service")
+            if notif:
+                try:
+                    await notif.reschedule_for_person(target_id)
+                except Exception as e:
+                    self.log.exception("reschedule after delete member failed: %s", e)
 
         await update.message.reply_text(t("groups_del_member_ok", update=update, context=context) if ok else t("groups_del_member_fail", update=update, context=context))
         await self._render_group_members(update, gid, context)

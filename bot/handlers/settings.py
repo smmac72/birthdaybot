@@ -141,7 +141,7 @@ class SettingsHandler:
             self.log.exception("followers groups count failed: %s", e)
 
         # fields
-        bd = _fmt_bday(u.get("birth_day"), u.get("birth_month"), u.get("birth_year"), update=update, context=context)
+        bd = _fmt_bday(u.get("birth_day"), u.get("birth_month"), u.get("birth_year"))
         tz_lbl = _gmt_label(u.get("tz", 0))
         alert = u.get("alert_hours")
         try:
@@ -149,12 +149,15 @@ class SettingsHandler:
         except Exception:
             alert = 0
 
+        followers_total = int(followers_friends) + int(followers_groups)
+
         lines = [
             t("settings_header", update=update, context=context),
             t("settings_bday", update=update, context=context, bday=bd),
             t("settings_tz", update=update, context=context, tz=tz_lbl),
             t("settings_alert", update=update, context=context, h=alert),
-            t("settings_followers", update=update, context=context, f_friends=followers_friends, f_groups=followers_groups),
+            t("settings_followers_total", update=update, context=context,
+              f_friends=followers_friends, f_groups=followers_groups, f_total=followers_total),
             "",
             t("choose_action", update=update, context=context),
         ]
