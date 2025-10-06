@@ -18,6 +18,7 @@ from telegram.ext import (
     filters,
     ApplicationHandlerStop,   # <<< IMPORTANT: stop further handlers properly
 )
+from telegram.constants import ParseMode
 
 from . import config
 
@@ -217,7 +218,7 @@ def build_application() -> Application:
 
     users_repo, groups_repo, friends_repo = _build_repos()
 
-    app = ApplicationBuilder().token(config.BOT_TOKEN).build()
+    app = ApplicationBuilder().token(config.BOT_TOKEN).parse_mode(ParseMode.HTML).build()
 
     app.bot_data["users_repo"] = users_repo
     app.bot_data["groups_repo"] = groups_repo
