@@ -1,0 +1,24 @@
+name: deploy
+
+on:
+  workflow_run:
+    workflows: ["build-and-push"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy-prod:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ~/apps/birthdaybot
+            docker compose pull
+            docker compose --env-file .env.prod up -d birthdaybot-prod adminbot-prod
+            docker system prune -f

@@ -1,11 +1,60 @@
-version: '3'
+x-common-env: &common-env
+  TZ: ${TZ}
+  DB_PATH: ${DB_PATH}
+  LOG_LEVEL: ${LOG_LEVEL}
+  DEFAULT_LANG: ${DEFAULT_LANG}
+  LOCALE_PATH: ${LOCALE_PATH}
+  SCHEDULE_HORIZON_DAYS: ${SCHEDULE_HORIZON_DAYS}
+  BOT_TOKEN: ${BOT_TOKEN}
+  ADMIN_BOT_TOKEN: ${ADMIN_BOT_TOKEN}
+  ADMIN_CHAT_ID: ${ADMIN_CHAT_ID}
+  ADMIN_ALLOWED_IDS: ${ADMIN_ALLOWED_IDS}
 
 services:
-  birthday-bot:
+  # ===== PROD =====
+  birthdaybot-prod:
+    container_name: birthdaybot-prod
     build: .
-    container_name: telegram-birthday-bot
-    volumes:
-      - ./data:/app/data
-    environment:
-      - TZ=Europe/Moscow
     restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment: *common-env
+    volumes:
+      - ./data-prod:/app/data
+
+  adminbot-prod:
+    container_name: adminbot-prod
+    build: .
+    command: ["python", "-m", "bot.adminbot.main"]
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment: *common-env
+    volumes:
+      - ./data-prod:/app/data
+    depends_on:
+      - birthdaybot-prod
+
+  # ===== STAGING =====
+  birthdaybot-stg:
+    container_name: birthdaybot-stg
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env.stg
+    environment: *common-env
+    volumes:
+      - ./data-stg:/app/data
+
+  adminbot-stg:
+    container_name: adminbot-stg
+    build: .
+    command: ["python", "-m", "bot.adminbot.main"]
+    restart: unless-stopped
+    env_file:
+      - .env.stg
+    environment: *common-env
+    volumes:
+      - ./data-stg:/app/data
+    depends_on:
+      - birthdaybot-stg

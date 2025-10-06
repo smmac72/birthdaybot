@@ -1,13 +1,20 @@
 FROM python:3.9-slim
 
+ENV PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_NO_CACHE_DIR=1
+
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tzdata ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-COPY birthday_bot.py .
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY . .
 
 VOLUME ["/app/data"]
 
-# run cmd
-CMD ["python", "birthday_bot.py"]
+CMD ["python", "-m", "bot.main"]

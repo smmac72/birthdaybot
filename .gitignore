@@ -28,8 +28,7 @@ dist/
 .DS_Store
 Thumbs.db
 
-# local config and secrets
-bot/config.py
+# local secrets
 .env
 .env.*
 
@@ -38,6 +37,8 @@ bot/config.py
 *.db
 *.sqlite*
 *.sqlite3
+/data-prod
+/data-stg
 
 # logs
 *.log
