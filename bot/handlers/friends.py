@@ -43,7 +43,7 @@ def _fmt_bday(d: Optional[int], m: Optional[int], y: Optional[int], *, update=No
 
 def _parse_bday(text: str):
     ttxt = (text or "").strip()
-    m = re.search(r"\b(\d{2})[-.](\d{2})(?:[-.](\d{4}))?\b", ttxt)
+    m = re.search(r"\b(\d{2})-(\d{2})(?:-(\d{4}))?\b", ttxt)
     if not m:
         return None
     d = int(m.group(1)); mo = int(m.group(2))
@@ -58,15 +58,13 @@ def _parse_bday(text: str):
     except ValueError:
         if not (mo == 2 and d == 29):
             return None
+        # 29 feb without leap-year -> accept by dropping year later
     return d, mo, y
 
-def _days_until_key_user_tz(d: Optional[int], m: Optional[int], *, tz_hours: int) -> int:
+def _days_until_key(d: Optional[int], m: Optional[int]) -> int:
     if not d or not m:
         return 10**9
-    # compute "today" in user's tz
-    now_utc = dt.datetime.now(dt.timezone.utc)
-    tz = dt.timezone(dt.timedelta(hours=int(tz_hours or 0)))
-    today = now_utc.astimezone(tz).date()
+    today = dt.date.today()
     try:
         target = dt.date(today.year, m, d)
     except ValueError:
@@ -74,6 +72,39 @@ def _days_until_key_user_tz(d: Optional[int], m: Optional[int], *, tz_hours: int
     if target < today:
         target = target.replace(year=today.year + 1)
     return (target - today).days
+
+# ----- safe tz parsing (fix for 'UTC', 'GMT-4', '+3', etc.) -----
+_TZ_INT_RE = re.compile(r"([+-]?\d{1,2})")
+
+def _as_int(v, default: int = 0) -> int:
+    """
+    Convert various tz representations to int hours.
+    Accepts: 3, -5, '0', 'UTC', 'UTC+2', 'GMT-4', '+3'
+    """
+    if v is None:
+        return default
+    if isinstance(v, int):
+        return v
+    try:
+        if isinstance(v, str):
+            s = v.strip()
+            # direct int in string
+            try:
+                return int(s)
+            except Exception:
+                pass
+            # common tokens like 'UTC', 'GMT'
+            if s.upper() in ("UTC", "GMT"):
+                return 0
+            m = _TZ_INT_RE.search(s)
+            if m:
+                return int(m.group(1))
+            return default
+        # last resort
+        return int(v)
+    except Exception:
+        return default
+# ----------------------------------------------------------------
 
 class FriendsHandler:
     def __init__(self, users: UsersRepo, friends: FriendsRepo, groups: GroupsRepo):
@@ -96,11 +127,8 @@ class FriendsHandler:
             await update.message.reply_text(t("not_found", update=update, context=context), reply_markup=friends_menu_kb(update=update, context=context))
             return
 
-        # read user's tz for proper "today"
-        uprof = await self.users.get_user(uid)
-        tz_hours = int((uprof or {}).get("tz") or 0)
-
-        rows.sort(key=lambda r: _days_until_key_user_tz(r.get("birth_day"), r.get("birth_month"), tz_hours=tz_hours))
+        # sort by days until (no tz needed here)
+        rows.sort(key=lambda r: _days_until_key(r.get("birth_day"), r.get("birth_month")))
 
         lines = [t("friends_header", update=update, context=context)] if rows else [
             t("friends_empty", update=update, context=context)
@@ -111,7 +139,7 @@ class FriendsHandler:
                 f"id:{r['friend_user_id']}" if r.get("friend_user_id") else "unknown"
             )
             bd = _fmt_bday(r.get("birth_day"), r.get("birth_month"), r.get("birth_year"), update=update, context=context)
-            dleft = _days_until_key_user_tz(r.get("birth_day"), r.get("birth_month"), tz_hours=tz_hours)
+            dleft = _days_until_key(r.get("birth_day"), r.get("birth_month"))
             when = _when_str(dleft, update=update, context=context)
             lines.append(f"{icon} {name} — {bd} ({when})")
 

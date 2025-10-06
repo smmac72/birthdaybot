@@ -142,9 +142,9 @@ donate_title: "support the project ({stars}⭐)"
 donate_desc: "donation for birthdaybot development"
 donate_thanks: "thanks for the support! received {amount}⭐"
 
-alert_age_part: " (исполнится {n})"
-alert_today: "сегодня день рождения у @{name}{age}!"
-alert_in_days: "у @{name}{age} день рождения через {days} дн. ({date})!"
+alert_age_part: " (turns {n})"
+alert_today: "today is @{name}{age}'s birthday!"
+alert_in_days: "@{name}{age} has a birthday in {days} d. ({date})!"
 test_alert: "test alert: birthday in {hours} h."
 
 # general new/used
@@ -159,3 +159,6 @@ settings_bday_ok_dropped_year: "date set (incorrect year discarded): {bday}"
 groups_code: "code: {code}"
 groups_members_word: "members"
 groups_one_title: "group:"
+
+# self birthday
+self_bday_today: "it's your birthday today — happy {age}!"

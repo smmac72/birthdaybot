@@ -59,6 +59,9 @@ def _next_birthday_date(bd: int, bm: int, by: Optional[int], today: dt.date) -> 
 def _job_name(person_id: int, follower_id: int, when_utc: dt.datetime) -> str:
     return f"bday:{person_id}:{follower_id}:{when_utc.strftime('%Y%m%d%H%M')}"
 
+def _self_job_name(user_id: int, when_utc: dt.datetime) -> str:
+    return f"selfbday:{user_id}:{when_utc.strftime('%Y%m%d%H%M')}"
+
 @dataclass
 class _UserRow:
     user_id: int
@@ -99,6 +102,8 @@ class NotifService:
 
         cnt_jobs = 0
         cnt_catchup = 0
+        cnt_self = 0
+        cnt_self_catchup = 0
 
         for r in rows:
             d = dict(r)
@@ -121,10 +126,42 @@ class NotifService:
                 continue
             bday_local = dt.datetime.combine(next_date, dt.time(0, 0, tzinfo=person_tz))
 
-            # horizon cut
+            # horizon cut (for follower alerts)
             if (bday_local.date() - today_utc).days > horizon_days:
-                continue
+                # но всё равно планируем самопоздравление, если в горизонте — иначе пропускаем
+                pass
 
+            # ---- SELF GREETING (09:00 local by default) ----
+            try:
+                self_hour = int(getattr(config, "SELF_BDAY_HOUR", 9))
+                self_minute = int(getattr(config, "SELF_BDAY_MINUTE", 0))
+            except Exception:
+                self_hour, self_minute = 9, 0
+
+            self_trigger_local = bday_local.replace(hour=self_hour, minute=self_minute)
+            self_trigger_utc = self_trigger_local.astimezone(dt.timezone.utc)
+
+            # schedule/catch-up only if within horizon window too (to avoid infinite future)
+            if (self_trigger_local.date() - today_utc).days <= horizon_days:
+                if self_trigger_utc <= now_utc and (now_utc - self_trigger_utc) <= dt.timedelta(hours=12):
+                    await self._fire_self(user_id=u.user_id)
+                    cnt_self_catchup += 1
+                elif self_trigger_utc > now_utc:
+                    name = _self_job_name(u.user_id, self_trigger_utc)
+                    for old in jq.get_jobs_by_name(name):
+                        try:
+                            old.schedule_removal()
+                        except Exception:
+                            pass
+                    jq.run_once(
+                        callback=self._fire_self_job,
+                        when=self_trigger_utc,
+                        data={"user_id": u.user_id},
+                        name=name,
+                    )
+                    cnt_self += 1
+
+            # ---- FOLLOWERS (existing logic) ----
             # followers union
             followers = await self._followers_union(u.user_id, (u.username or "").lower() if u.username else None)
 
@@ -201,7 +238,8 @@ class NotifService:
                 )
                 cnt_jobs += 1
 
-        self.log.info("scheduled %s jobs, catch-up sent %s", cnt_jobs, cnt_catchup)
+        self.log.info("scheduled %s follower jobs (+%s catch-up), %s self jobs (+%s self catch-up)",
+                      cnt_jobs, cnt_catchup, cnt_self, cnt_self_catchup)
 
     async def schedule_daily_refresh(self, at_hour: int = 3) -> None:
         jq = getattr(self.app, "job_queue", None)
@@ -256,9 +294,16 @@ class NotifService:
         jq = getattr(self.app, "job_queue", None)
         if not jq:
             return
-        # cancel old
+        # cancel old follower jobs
         for j in self._iter_jobs():
             if j.name and j.name.startswith(f"bday:{person_id}:"):
+                try:
+                    j.schedule_removal()
+                except Exception:
+                    pass
+        # cancel self jobs too
+        for j in self._iter_jobs():
+            if j.name and j.name.startswith(f"selfbday:{person_id}:"):
                 try:
                     j.schedule_removal()
                 except Exception:
@@ -350,6 +395,16 @@ class NotifService:
     ) -> str:
         return t("alert_today", update=update, context=context, name=uname, age=age_part)
 
+    def _self_today_text(
+        self,
+        *,
+        age_part: str,
+        update=None,
+        context: Optional[ContextTypes.DEFAULT_TYPE] = None,
+    ) -> str:
+        # адресуемся к пользователю напрямую
+        return t("self_bday_today", update=update, context=context, age=age_part)
+
     # ------- senders -------
 
     async def _fire_direct(
@@ -432,6 +487,37 @@ class NotifService:
             await self.app.bot.send_message(chat_id=chat_id, text=f"🎂 {msg} 🎉")
         except Exception as e:
             self.log.exception("send failed: %s", e)
+
+    # --- self greeting senders ---
+
+    async def _fire_self(self, *, user_id: int) -> None:
+        prof = await self.users.get_user(user_id)
+        if not prof:
+            return
+        chat_id = prof.get("chat_id")
+        if not chat_id:
+            return
+
+        tz = _as_int(prof.get("tz"), 0)
+        f_tz = _tz_from_offset(tz)
+        now_f = dt.datetime.now(dt.timezone.utc).astimezone(f_tz)
+        today_f = now_f.date()
+
+        d, m, y = prof.get("birth_day"), prof.get("birth_month"), prof.get("birth_year")
+        age_part = self._age_part(day=d, month=m, year=y, base_date=today_f)
+
+        msg = self._self_today_text(age_part=age_part)
+        try:
+            await self.app.bot.send_message(chat_id=chat_id, text=f"🎉 {msg} 🎂")
+        except Exception as e:
+            self.log.exception("self send failed: %s", e)
+
+    async def _fire_self_job(self, context: ContextTypes.DEFAULT_TYPE) -> None:
+        data = context.job.data or {}
+        uid = int(data.get("user_id") or 0)
+        if not uid:
+            return
+        await self._fire_self(user_id=uid)
 
     # ------- followers resolution -------
 

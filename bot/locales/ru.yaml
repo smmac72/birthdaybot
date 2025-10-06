@@ -160,3 +160,6 @@ settings_bday_ok_dropped_year: "дата обновлена (год отброш
 groups_code: "код: {code}"
 groups_members_word: "участников"
 groups_one_title: "группа:"
+
+# self birthday
+self_bday_today: "С днем рождения! От лица всей команды бота поздравляем с {age} годами!"
