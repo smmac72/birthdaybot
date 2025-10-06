@@ -16,6 +16,7 @@ from telegram.ext import (
     PreCheckoutQueryHandler,
     ContextTypes,
     filters,
+    ApplicationHandlerStop,   # <<< IMPORTANT: stop further handlers properly
 )
 
 from . import config
@@ -24,7 +25,6 @@ from . import config
 from .db.repo_users import UsersRepo
 from .db.repo_groups import GroupsRepo
 from .db.repo_friends import FriendsRepo
-from .db.repo_wishlist import WishlistRepo  # <-- NEW
 
 # handlers
 from .handlers.start import StartHandler, AWAITING_LANG_PICK, AWAITING_REGISTRATION_BDAY
@@ -32,7 +32,6 @@ from .handlers.groups import GroupsHandler
 from .handlers.friends import FriendsHandler
 from .handlers.settings import SettingsHandler, S_WAIT_BDAY, S_WAIT_TZ, S_WAIT_ALERT_DAYS, S_WAIT_ALERT_TIME, S_WAIT_LANG
 from .handlers.about import AboutHandler
-from .handlers.wishlist import WishlistHandler  # <-- NEW
 
 # keyboards
 from .keyboards import main_menu_kb
@@ -59,13 +58,12 @@ def _setup_logging() -> None:
 
 
 # build repos
-def _build_repos() -> Tuple[UsersRepo, GroupsRepo, FriendsRepo, WishlistRepo]:
+def _build_repos() -> Tuple[UsersRepo, GroupsRepo, FriendsRepo]:
     db_path = config.DB_PATH
     users = UsersRepo(db_path)
     groups = GroupsRepo(db_path)
     friends = FriendsRepo(db_path)
-    wishlist = WishlistRepo(db_path)  # <-- NEW
-    return users, groups, friends, wishlist
+    return users, groups, friends
 
 
 # helpers
@@ -91,7 +89,9 @@ async def _broadcast_key_to_all(app: Application, users_repo: UsersRepo, key: st
                 lang = str(u["lang"])
         except Exception:
             pass
-        text = t(key) if callable(t) else key
+        # NOTE: sending plain key text (t() without context falls back to default) —
+        # per-user language broadcast is handled by the main bot below when it reads admin_events.
+        text = t(key)
         try:
             await app.bot.send_message(chat_id=cid, text=text)
             sent += 1
@@ -139,7 +139,7 @@ async def maintenance_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _is_admin(update):
         return
 
-    # hard: if still alive, behave like soft
+    # hard/soft messages
     mode = maint.get("mode", "soft")
     key = maint.get("key") or ("maintenance_hard" if mode == "hard" else "maintenance_soft")
 
@@ -152,7 +152,8 @@ async def maintenance_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         cd[mem_key] = True
 
-    raise asyncio.CancelledError  # abort rest of handlers
+    # CRITICAL: stop further processing for this update
+    raise ApplicationHandlerStop
 
 
 # --- admin events polling (from admin_events table)
@@ -214,14 +215,13 @@ def build_application() -> Application:
     _setup_logging()
     log = logging.getLogger("birthdaybot")
 
-    users_repo, groups_repo, friends_repo, wishlist_repo = _build_repos()
+    users_repo, groups_repo, friends_repo = _build_repos()
 
     app = ApplicationBuilder().token(config.BOT_TOKEN).build()
 
     app.bot_data["users_repo"] = users_repo
     app.bot_data["groups_repo"] = groups_repo
     app.bot_data["friends_repo"] = friends_repo
-    app.bot_data["wishlist_repo"] = wishlist_repo  # <-- NEW
     app.bot_data.setdefault("maintenance", {"enabled": False, "mode": "soft", "key": None})
 
     start_handler = StartHandler(users_repo)
@@ -229,14 +229,13 @@ def build_application() -> Application:
     friends_handler = FriendsHandler(users_repo, friends_repo, groups_repo)
     settings_handler = SettingsHandler(users_repo, friends_repo, groups_repo)
     about_handler = AboutHandler()
-    wishlist_handler = WishlistHandler(wishlist_repo, users_repo)  # <-- NEW
 
     app.add_error_handler(on_error)
 
-    # maintenance guard first
+    # maintenance guard first (very early group)
     app.add_handler(MessageHandler(filters.ALL, maintenance_guard), group=-100)
 
-    # start / registration
+    # start / registration (add language state)
     app.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler("start", start_handler.start)],
@@ -261,15 +260,6 @@ def build_application() -> Application:
         await bh.menu_entry(update, context)
 
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_birthdays")), show_birthdays), group=0)
-
-    # wishlist wiring (nested under birthdays)
-    # direct actions
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_my")), wishlist_handler.my_list), group=0)
-    # conversations
-    for ch in wishlist_handler.conversation_handlers():
-        app.add_handler(ch, group=0)
-    # back to birthdays from nested menu
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_back")), show_birthdays), group=0)
 
     # groups flows
     for ch in groups_handler.conversation_handlers():
