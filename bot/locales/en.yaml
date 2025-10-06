@@ -3,6 +3,10 @@ lang_label: "English"
 
 # titles / headers
 main_menu_title: "main menu:"
+maintenance_message: "temporary maintenance in progress. please try again later."
+maintenance_soft: "⚙️ maintenance: the bot is temporarily limited. menus/commands are disabled; reminders are paused."
+maintenance_hard: "⚙️ maintenance: the bot is going offline for service. reminders are paused. we'll be back soon."
+maintenance_off: "✅ we're back! everything is online again. birthday reminders have been rescheduled."
 
 # generic
 btn_cancel: "◀️ cancel"

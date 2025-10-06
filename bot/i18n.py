@@ -108,20 +108,14 @@ def language_button_text(code: str) -> str:
     # single source for the keyboard caption
     return language_label(code)
 
+def _strip_emoji_punct(s: str) -> str:
+    # drop everything not letters/digits/space/hyphen
+    return re.sub(r"[^\w\s\-]+", "", s, flags=re.UNICODE).strip()
 
 def parse_language_choice(text: str) -> Optional[str]:
-    """map pressed caption back to language code"""
-    if not text:
-        return None
-    normalized = text.strip().casefold()
+    s = (text or "").strip()
     for code in available_languages():
-        lbl = language_button_text(code).strip().casefold()
-        if normalized == lbl:
-            return code
-        # be lenient: some keyboards drop emoji — compare alnum subset
-        def _only_alnum(s: str) -> str:
-            return "".join(ch for ch in s if ch.isalnum() or ch.isspace())
-        if _only_alnum(normalized) == _only_alnum(lbl):
+        if s == language_button_text(code):
             return code
     return None
 

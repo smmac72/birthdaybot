@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+# main entry with maintenance guard and admin events polling
+
+import asyncio
 import logging
-from typing import Dict, Tuple, Optional
+from typing import Tuple, List
 
 from telegram import Update
 from telegram.ext import (
@@ -23,7 +26,7 @@ from .db.repo_groups import GroupsRepo
 from .db.repo_friends import FriendsRepo
 
 # handlers
-from .handlers.start import StartHandler, AWAITING_REGISTRATION_BDAY, AWAITING_LANG_PICK
+from .handlers.start import StartHandler, AWAITING_LANG_PICK, AWAITING_REGISTRATION_BDAY
 from .handlers.groups import GroupsHandler
 from .handlers.friends import FriendsHandler
 from .handlers.settings import SettingsHandler, S_WAIT_BDAY, S_WAIT_TZ, S_WAIT_ALERT, S_WAIT_LANG
@@ -32,11 +35,14 @@ from .handlers.about import AboutHandler
 # keyboards
 from .keyboards import main_menu_kb
 
+# notif service
+from .services.notif_service import NotifService
+
 # i18n
 from .i18n import t, btn_regex
 
-# notif service
-from .services.notif_service import NotifService
+# re-use admin repo to read events and chat list
+from .adminbot.repo import AdminRepo
 
 
 # logging setup
@@ -59,135 +65,41 @@ def _build_repos() -> Tuple[UsersRepo, GroupsRepo, FriendsRepo]:
     return users, groups, friends
 
 
+# helpers
+
+def _is_admin(update: Update) -> bool:
+    try:
+        uid = update.effective_user.id
+    except Exception:
+        return False
+    allowed = getattr(config, "ADMIN_ALLOWED_IDS", []) or []
+    return bool(uid and uid in allowed)
+
+async def _broadcast_key_to_all(app: Application, users_repo: UsersRepo, key: str) -> int:
+    # per-user localization by reading profile lang
+    repo = AdminRepo(config.DB_PATH)
+    chat_ids = await repo.list_all_chat_ids()
+    sent = 0
+    for cid in chat_ids:
+        lang = "en"
+        try:
+            u = await users_repo.get_user(int(cid))
+            if u and u.get("lang"):
+                lang = str(u["lang"])
+        except Exception:
+            pass
+        text = t(key) if callable(t) else key
+        try:
+            await app.bot.send_message(chat_id=cid, text=text)
+            sent += 1
+        except Exception:
+            pass
+    return sent
+
+
 # main menu
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(t("main_menu_title", update=update, context=context), reply_markup=main_menu_kb(update=update, context=context))
-
-
-# birthdays overview — now i18n
-async def show_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    log = logging.getLogger("birthdays")
-    users: UsersRepo = context.application.bot_data["users_repo"]
-    groups: GroupsRepo = context.application.bot_data["groups_repo"]
-    friends: FriendsRepo = context.application.bot_data["friends_repo"]
-
-    uid = update.effective_user.id
-    uname = (update.effective_user.username or "").lower()
-
-    # helpers (keep simple)
-
-    def _icon_registered(user_id: Optional[int]) -> str:
-        return "✅" if user_id else "⚪️"
-
-    def _fmt_bday(d, m, y) -> str:
-        if d and m:
-            return f"{int(d):02d}-{int(m):02d}" + (f"-{int(y)}" if y else "")
-        return t("when_unknown", update=update, context=context)
-
-    def _days_key(d, m) -> int:
-        if not d or not m:
-            return 10**9
-        import datetime as dt
-        today = dt.date.today()
-        try:
-            tdate = dt.date(today.year, int(m), int(d))
-        except Exception:
-            return 10**9
-        if tdate < today:
-            tdate = tdate.replace(year=today.year + 1)
-        return (tdate - today).days
-
-    def _when(days: int) -> str:
-        if days == 0:
-            return t("when_today", update=update, context=context)
-        if days >= 10**8:
-            return t("when_unknown", update=update, context=context)
-        return t("when_in_days", update=update, context=context, n=days)
-
-    contacts: Dict[Tuple[Optional[int], Optional[str]], Dict] = {}
-
-    # collect friends
-    try:
-        f_rows = await friends.list_for_user(uid)
-        for r in f_rows:
-            d = dict(r)
-            key = (
-                d.get("friend_user_id"),
-                (d.get("friend_username") or "").lower() if d.get("friend_username") else None,
-            )
-            p = contacts.get(key) or {
-                "user_id": d.get("friend_user_id"),
-                "username": d.get("friend_username"),
-                "birth_day": d.get("birth_day"),
-                "birth_month": d.get("birth_month"),
-                "birth_year": d.get("birth_year"),
-                "as_friend": True,
-                "as_group": False,
-            }
-            p["as_friend"] = True
-            p["birth_day"] = p["birth_day"] or d.get("birth_day")
-            p["birth_month"] = p["birth_month"] or d.get("birth_month")
-            p["birth_year"] = p["birth_year"] or d.get("birth_year")
-            contacts[key] = p
-    except Exception as e:
-        log.exception("friends fetch failed: %s", e)
-
-    # collect co-members from groups
-    try:
-        g_rows = await groups.list_user_groups(uid)
-        for g in g_rows:
-            members = await groups.list_members(g["group_id"])
-            for m in members:
-                md = dict(m)
-                mid = md.get("user_id")
-                mname = (md.get("username") or "").lower() if md.get("username") else None
-                # skip self
-                if (mid and mid == uid) or (not mid and mname and mname == uname):
-                    continue
-                key = (mid, mname)
-                p = contacts.get(key) or {
-                    "user_id": mid,
-                    "username": md.get("username"),
-                    "birth_day": md.get("birth_day"),
-                    "birth_month": md.get("birth_month"),
-                    "birth_year": md.get("birth_year"),
-                    "as_friend": False,
-                    "as_group": True,
-                }
-                p["as_group"] = True
-                p["birth_day"] = p["birth_day"] or md.get("birth_day")
-                p["birth_month"] = p["birth_month"] or md.get("birth_month")
-                p["birth_year"] = p["birth_year"] or md.get("birth_year")
-                contacts[key] = p
-    except Exception as e:
-        log.exception("groups fetch failed: %s", e)
-
-    if not contacts:
-        await update.message.reply_text(
-            t("birthdays_empty", update=update, context=context),
-            reply_markup=main_menu_kb(update=update, context=context),
-        )
-        return
-
-    items = list(contacts.values())
-    items.sort(key=lambda x: _days_key(x.get("birth_day"), x.get("birth_month")))
-
-    lines = [t("birthdays_header", update=update, context=context)]
-    for x in items:
-        icon = _icon_registered(x.get("user_id"))
-        name = f"@{x['username']}" if x.get("username") else (f"id:{x['user_id']}" if x.get("user_id") else "unknown")
-        bd = _fmt_bday(x.get("birth_day"), x.get("birth_month"), x.get("birth_year"))
-        dleft = _days_key(x.get("birth_day"), x.get("birth_month"))
-        when = _when(dleft)
-        tags = []
-        if x.get("as_friend"):
-            tags.append(t("badge_friend", update=update, context=context))
-        if x.get("as_group"):
-            tags.append(t("badge_in_group", update=update, context=context))
-        tag_str = f" [{' & '.join(tags)}]" if tags else ""
-        lines.append(f"• {icon} {name} — {bd} ({when}){tag_str}")
-
-    await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb(update=update, context=context))
+    await update.message.reply_text(t("main_menu_title"), reply_markup=main_menu_kb(context=context))
 
 
 # global error handler
@@ -211,15 +123,89 @@ async def alert_test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hours = max(0, min(72, hours))
     person_id = update.effective_user.id
     sent = await notif.test_broadcast(person_id=person_id, hours=hours)
-    await update.message.reply_text(f"test: sent {sent} alerts.")
+    await update.message.reply_text(f"test: sent {sent}.")
 
-async def who_follows_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    notif: NotifService = context.application.bot_data.get("notif_service")  # type: ignore
-    if not notif:
-        await update.message.reply_text("notif service not ready.")
+
+# maintenance guard (soft): block any user input except admins
+async def maintenance_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    maint = context.application.bot_data.get("maintenance") or {}
+    if not maint.get("enabled"):
+        return  # pass through
+
+    # admins bypass
+    if _is_admin(update):
         return
-    txt = await notif.debug_followers(update.effective_user.id)
-    await update.message.reply_text(txt)
+
+    # hard: if still alive, behave like soft
+    mode = maint.get("mode", "soft")
+    key = maint.get("key") or ("maintenance_hard" if mode == "hard" else "maintenance_soft")
+
+    cd = context.chat_data
+    mem_key = f"maint_notified:{mode}"
+    if not cd.get(mem_key):
+        try:
+            await (update.effective_message or update.message).reply_text(t(key))
+        except Exception:
+            pass
+        cd[mem_key] = True
+
+    raise asyncio.CancelledError  # abort rest of handlers
+
+
+# --- admin events polling (from admin_events table)
+
+async def _process_admin_events(context: ContextTypes.DEFAULT_TYPE):
+    app = context.application
+    users_repo: UsersRepo = app.bot_data["users_repo"]
+    notif: NotifService = app.bot_data.get("notif_service")
+    repo = AdminRepo(config.DB_PATH)
+
+    try:
+        events = await repo.fetch_pending_events(limit=50)
+    except Exception as e:
+        logging.getLogger("birthdaybot").exception("fetch admin events failed: %s", e)
+        return
+
+    if not events:
+        return
+
+    done_ids: List[int] = []
+    for ev in events:
+        kind = ev.get("kind")
+        payload = ev.get("payload") or {}
+        if kind == "maint":
+            key = payload.get("key") or "maintenance_soft"
+            if key == "maintenance_on_soft":
+                app.bot_data["maintenance"] = {"enabled": True, "mode": "soft", "key": "maintenance_soft"}
+                await _broadcast_key_to_all(app, users_repo, "maintenance_soft")
+            elif key == "maintenance_on_hard":
+                app.bot_data["maintenance"] = {"enabled": True, "mode": "hard", "key": "maintenance_hard"}
+                await _broadcast_key_to_all(app, users_repo, "maintenance_hard")
+                try:
+                    if notif:
+                        await notif.shutdown()
+                except Exception:
+                    pass
+                async def _stop():
+                    await asyncio.sleep(1.0)
+                    try:
+                        await app.stop()
+                    except Exception:
+                        pass
+                asyncio.create_task(_stop())
+            elif key == "maintenance_off":
+                app.bot_data["maintenance"] = {"enabled": False, "mode": "soft", "key": None}
+                await _broadcast_key_to_all(app, users_repo, "maintenance_off")
+            done_ids.append(int(ev["id"]))
+        else:
+            done_ids.append(int(ev["id"]))
+
+    try:
+        if done_ids:
+            await repo.mark_events_processed(done_ids)
+    except Exception:
+        pass
+
 
 # build application and register handlers
 def build_application() -> Application:
@@ -230,32 +216,29 @@ def build_application() -> Application:
 
     app = ApplicationBuilder().token(config.BOT_TOKEN).build()
 
-    # stash repos
     app.bot_data["users_repo"] = users_repo
     app.bot_data["groups_repo"] = groups_repo
     app.bot_data["friends_repo"] = friends_repo
+    app.bot_data.setdefault("maintenance", {"enabled": False, "mode": "soft", "key": None})
 
-    # handler instances
     start_handler = StartHandler(users_repo)
     groups_handler = GroupsHandler(groups_repo, users_repo)
     friends_handler = FriendsHandler(users_repo, friends_repo, groups_repo)
     settings_handler = SettingsHandler(users_repo, friends_repo, groups_repo)
     about_handler = AboutHandler()
 
-    # errors
     app.add_error_handler(on_error)
 
-    # start / registration (+ language pick)
+    # maintenance guard first
+    app.add_handler(MessageHandler(filters.ALL, maintenance_guard), group=-100)
+
+    # start / registration (add language state)
     app.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler("start", start_handler.start)],
             states={
-                AWAITING_REGISTRATION_BDAY: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.reg_bday_entered)
-                ],
-                AWAITING_LANG_PICK: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.lang_pick_entered)
-                ],
+                AWAITING_LANG_PICK: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.lang_pick_entered)],
+                AWAITING_REGISTRATION_BDAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.reg_bday_entered)],
             },
             fallbacks=[],
             name="conv_start_reg",
@@ -264,7 +247,15 @@ def build_application() -> Application:
         group=0,
     )
 
-    # main menu buttons (all through btn_regex -> i18n-proof)
+    # birthdays screen
+    async def show_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        from .handlers.birthdays import BirthdaysHandler
+        bh = context.application.bot_data.get("birthdays_handler")
+        if not bh:
+            bh = BirthdaysHandler(users_repo, friends_repo, groups_repo)
+            context.application.bot_data["birthdays_handler"] = bh
+        await bh.menu_entry(update, context)
+
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_birthdays")), show_birthdays), group=0)
 
     # groups flows
@@ -279,10 +270,50 @@ def build_application() -> Application:
 
     # settings
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_settings")), settings_handler.menu_entry), group=2)
-    for ch in settings_handler.conversation_handlers():
-        app.add_handler(ch, group=2)
 
-    # language is inside settings handler as a convo (S_WAIT_LANG)
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex(btn_regex("btn_settings_bday")), settings_handler.set_bday_start)],
+            states={S_WAIT_BDAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_handler.set_bday_wait)]},
+            fallbacks=[],
+            name="conv_settings_bday",
+            persistent=False,
+        ),
+        group=2,
+    )
+
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex(btn_regex("btn_settings_tz")), settings_handler.set_tz_start)],
+            states={S_WAIT_TZ: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_handler.set_tz_wait)]},
+            fallbacks=[],
+            name="conv_settings_tz",
+            persistent=False,
+        ),
+        group=2,
+    )
+
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex(btn_regex("btn_settings_alert")), settings_handler.set_alert_start)],
+            states={S_WAIT_ALERT: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_handler.set_alert_wait)]},
+            fallbacks=[],
+            name="conv_settings_alert",
+            persistent=False,
+        ),
+        group=2,
+    )
+
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex(btn_regex("btn_settings_lang")), settings_handler.change_lang_start)],
+            states={S_WAIT_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_handler.change_lang_wait)]},
+            fallbacks=[MessageHandler(filters.Regex(btn_regex("btn_cancel")), settings_handler.menu_entry)],
+            name="conv_settings_lang",
+            persistent=False,
+        ),
+        group=2,
+    )
 
     # about / donations
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_about")), about_handler.menu_entry), group=3)
@@ -298,16 +329,15 @@ def build_application() -> Application:
 
     # test alerts
     app.add_handler(CommandHandler("alert_test", alert_test_cmd), group=3)
-    app.add_handler(CommandHandler("who_follows", who_follows_cmd), group=3)
 
-    # debug logger
+    # debug logger last
     async def log_incoming(update: Update, _):
         if update.message and update.message.text:
             logging.getLogger("incoming").info("text=%r", update.message.text)
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, log_incoming), group=99)
 
-    # post-init: schedule window and daily refresh
+    # post-init: schedule window, daily refresh, admin events poller
     async def _post_init(application: Application):
         if getattr(application, "job_queue", None) is None:
             log.info("job queue not available, skipping schedule")
@@ -321,10 +351,10 @@ def build_application() -> Application:
             horizon = getattr(config, "SCHEDULE_HORIZON_DAYS", 7)
             await notif.schedule_all(horizon_days=horizon)
             await notif.schedule_daily_refresh(at_hour=3)
-            await notif.schedule_daily_cleanup(at_hour=4)
-            log.info("birthday notifications scheduled and daily refresh set")
-        except Exception as e:  # pragma: no cover
-            log.exception("failed to schedule notifications: %s", e)
+            application.job_queue.run_repeating(_process_admin_events, interval=5.0, first=3.0, name="admin_events_poll")
+            log.info("birthday notifications scheduled, daily refresh set, admin events poller on")
+        except Exception as e:
+            log.exception("post-init failed: %s", e)
 
     app.post_init = _post_init
 

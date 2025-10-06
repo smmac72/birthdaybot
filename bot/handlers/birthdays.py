@@ -18,17 +18,17 @@ def _log_id() -> str:
 def _icon_registered(user_id: Optional[int]) -> str:
     return "✅" if user_id else "⚪️"
 
-def _display_name(user_id: Optional[int], username: Optional[str]) -> str:
+def _display_name(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: Optional[int], username: Optional[str]) -> str:
     if username:
         return f"@{username}"
     if user_id:
         return f"id:{user_id}"
-    return "unknown"
+    return t("label_unknown", update=update, context=context)
 
-def _fmt_bday(d: Optional[int], m: Optional[int], y: Optional[int]) -> str:
+def _fmt_bday(update: Update, context: ContextTypes.DEFAULT_TYPE, d: Optional[int], m: Optional[int], y: Optional[int]) -> str:
     if d and m:
         return f"{int(d):02d}-{int(m):02d}" + (f"-{int(y)}" if y else "")
-    return "не указан"
+    return t("when_unknown", update=update, context=context)
 
 def _days_until(today_ymd: Tuple[int,int,int], d: Optional[int], m: Optional[int]) -> int:
     if not d or not m:
@@ -36,7 +36,7 @@ def _days_until(today_ymd: Tuple[int,int,int], d: Optional[int], m: Optional[int
     import datetime as dt
     ty, tm, td = today_ymd
     try:
-        target = dt.date(ty, m, d)
+        target = dt.date(ty, int(m), int(d))
     except ValueError:
         return 10**9
     today = dt.date(ty, tm, td)
@@ -124,7 +124,10 @@ class BirthdaysHandler:
                         merged[key]["birth_year"] = m.get("birth_year")
 
         if not merged:
-            await update.message.reply_text(t("birthdays_empty", update=update, context=context), reply_markup=main_menu_kb())
+            await update.message.reply_text(
+                t("birthdays_empty", update=update, context=context),
+                reply_markup=main_menu_kb(update=update, context=context),
+            )
             return
 
         items: List[Dict[str, Any]] = list(merged.values())
@@ -133,24 +136,24 @@ class BirthdaysHandler:
         lines = [t("birthdays_header", update=update, context=context)]
         for v in items:
             icon = _icon_registered(v.get("user_id"))
-            name = _display_name(v.get("user_id"), v.get("username"))
-            bd = _fmt_bday(v.get("birth_day"), v.get("birth_month"), v.get("birth_year"))
+            name = _display_name(update, context, v.get("user_id"), v.get("username"))
+            bd = _fmt_bday(update, context, v.get("birth_day"), v.get("birth_month"), v.get("birth_year"))
             dleft = _days_until(tkey, v.get("birth_day"), v.get("birth_month"))
             when = _when_str(update, context, dleft)
 
             badges = []
             if "friend" in v["sources"]:
-                badges.append(t("badge_friend"))
+                badges.append(t("badge_friend", update=update, context=context))
             if "group" in v["sources"]:
-                badges.append(t("badge_in_group"))
+                badges.append(t("badge_in_group", update=update, context=context))
             badge_str = f" [{' & '.join(badges)}]" if badges else ""
 
             groups_note = ""
             if v["groups"]:
                 gsample = sorted(v["groups"])
                 joined = ", ".join(gsample[:2]) + (" …" if len(gsample) > 2 else "")
-                groups_note = t("groups_label", names=joined)
+                groups_note = t("groups_label", update=update, context=context, names=joined)
 
             lines.append(f"{icon} {name} — {bd} ({when}){badge_str}{groups_note}")
 
-        await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
+        await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb(update=update, context=context))
