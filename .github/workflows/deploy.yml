@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - stage   # или develop — как назовёшь ветку для стейджа
+      - stage
 
 jobs:
   deploy-prod:
@@ -12,6 +12,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
+
     steps:
       - name: Deploy over SSH to PROD
         uses: appleboy/ssh-action@v1.0.3
@@ -23,7 +24,6 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
-            set -x
 
             BASE_DIR="/home/deploy/apps"
             APP_DIR="$BASE_DIR/birthdaybot"
@@ -47,7 +47,6 @@ jobs:
 
             docker compose build --pull
             docker compose --env-file .env.prod up -d birthdaybot-prod adminbot-prod
-
             docker image prune -f
 
 
@@ -56,6 +55,7 @@ jobs:
     if: github.ref == 'refs/heads/stage'
     runs-on: ubuntu-latest
     environment: staging
+
     steps:
       - name: Deploy over SSH to STAGE
         uses: appleboy/ssh-action@v1.0.3
@@ -67,22 +67,27 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
+
             BASE_DIR="/home/deploy/apps"
             APP_DIR="$BASE_DIR/birthdaybot"
+            REPO_URL="https://github.com/smmac72/birthdaybot.git"
+            BRANCH="stage"
 
             mkdir -p "$BASE_DIR"
+
             if [ -d "$APP_DIR/.git" ]; then
               cd "$APP_DIR"
               git fetch --all --prune
-              git reset --hard origin/stage
+              git checkout "$BRANCH"
+              git reset --hard "origin/$BRANCH"
             else
               cd "$BASE_DIR"
-              git clone --depth=1 -b stage git@github.com:smmac72/birthdaybot.git birthdaybot
+              git clone --depth=1 --branch "$BRANCH" "$REPO_URL" birthdaybot
               cd "$APP_DIR"
             fi
 
+            test -f .env.stg || { echo "ERROR: .env.stg not found"; exit 1; }
+
             docker compose build --pull
             docker compose --env-file .env.stg up -d birthdaybot-stg adminbot-stg
-
             docker image prune -f
-
