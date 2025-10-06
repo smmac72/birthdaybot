@@ -29,7 +29,7 @@ from .db.repo_friends import FriendsRepo
 from .handlers.start import StartHandler, AWAITING_LANG_PICK, AWAITING_REGISTRATION_BDAY
 from .handlers.groups import GroupsHandler
 from .handlers.friends import FriendsHandler
-from .handlers.settings import SettingsHandler, S_WAIT_BDAY, S_WAIT_TZ, S_WAIT_ALERT, S_WAIT_LANG
+from .handlers.settings import SettingsHandler, S_WAIT_BDAY, S_WAIT_TZ, S_WAIT_ALERT_DAYS, S_WAIT_ALERT_TIME, S_WAIT_LANG
 from .handlers.about import AboutHandler
 
 # keyboards
@@ -153,7 +153,6 @@ async def maintenance_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- admin events polling (from admin_events table)
-
 async def _process_admin_events(context: ContextTypes.DEFAULT_TYPE):
     app = context.application
     users_repo: UsersRepo = app.bot_data["users_repo"]
@@ -296,7 +295,10 @@ def build_application() -> Application:
     app.add_handler(
         ConversationHandler(
             entry_points=[MessageHandler(filters.Regex(btn_regex("btn_settings_alert")), settings_handler.set_alert_start)],
-            states={S_WAIT_ALERT: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_handler.set_alert_wait)]},
+            states={
+                S_WAIT_ALERT_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_handler.set_alert_wait_days)],
+                S_WAIT_ALERT_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_handler.set_alert_wait_time)],
+            },
             fallbacks=[],
             name="conv_settings_alert",
             persistent=False,

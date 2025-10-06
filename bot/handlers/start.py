@@ -71,7 +71,7 @@ class StartHandler:
             )
             return AWAITING_LANG_PICK
 
-        # if birthday is already set — straight to main menu
+        # if birthday is already set - straight to main menu
         has_bday = bool(u.get("birth_day") and u.get("birth_month"))
         if has_bday:
             await update.message.reply_text(t("start_back", update=update, context=context), reply_markup=main_menu_kb(update=update, context=context))
@@ -101,7 +101,7 @@ class StartHandler:
 
         # save birthday
         try:
-            # repo has update_bday; use that (set_birthday could be legacy)
+            # repo has update_bday;
             await self.users.update_bday(uid, d, m, y)
         except Exception as e:
             log.exception("failed to set birthday: %s", e)

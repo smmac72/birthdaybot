@@ -6,10 +6,10 @@ import yaml
 from typing import Dict, Any, Optional, Iterable
 
 _LOCALES: Dict[str, Dict[str, str]] = {}
-_LOCALES_DIR = os.path.join(os.path.dirname(__file__), "locales")  # expects en.yaml, ru.yaml, etc.
+_LOCALES_DIR = os.path.join(os.path.dirname(__file__), "locales")  # expects en.yaml, ru.yaml, etc
 
 
-# safe dict for format_map — leaves {missing} as-is instead of blowing up
+# safe dict for format_map - leaves {missing} as-is
 class _SafeDict(dict):
     def __missing__(self, key):
         return "{" + key + "}"
@@ -36,7 +36,7 @@ def _load_locales() -> None:
 
 def available_languages() -> list[str]:
     _load_locales()
-    # stable order: english first if present, then ru, then others
+    # english first if present, then ru, then others
     pref = ["en", "ru"]
     rest = [c for c in _LOCALES.keys() if c not in pref]
     return [c for c in pref if c in _LOCALES] + sorted(rest)
@@ -48,7 +48,7 @@ def current_lang(*, update=None, context=None, default: str = "en") -> str:
         code = (context.user_data or {}).get("lang")
         if isinstance(code, str) and code in _LOCALES:
             return code
-    # naive fallback by telegram locale if you ever pass it
+    # naive fallback by telegram locale
     if update is not None:
         try:
             user_lang = (getattr(update.effective_user, "language_code", None) or "").split("-")[0].lower()
@@ -81,13 +81,13 @@ def t(key: str, *, update=None, context=None, **params) -> str:
     try:
         return raw.format_map(_SafeDict(params))
     except Exception:
-        # if formatting borks, just return raw to avoid user-visible crash
+        # return raw to avoid crashing on client-side
         return raw
 
 
 # buttons helpers
 
-# language labels (with emoji) — overridable via locale keys if present
+# language labels (TODO legacy, overriden by locales)
 _DEFAULT_LANG_LABELS = {
     "en": "English 🇬🇧",
     "ru": "Русский 🇷🇺",
@@ -135,7 +135,6 @@ def btn_regex(key: str) -> str:
         val = mp.get(key)
         if isinstance(val, str) and val:
             texts.append(_escape_regex(val))
-    # if key is missing somewhere, fall back to raw key to avoid dead buttons
     if not texts:
         texts = [_escape_regex(key)]
     pattern = "^(?:" + "|".join(sorted(set(texts), key=lambda x: x.lower())) + ")$"

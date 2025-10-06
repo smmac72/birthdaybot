@@ -80,7 +80,7 @@ class MaintenanceService:
         # resume scheduling window
         jq = getattr(self.app, "job_queue", None)
         if jq and self._paused_jobs_snapshot:
-            # can't "resume" paused jobs reliably across all PTB versions, so reschedule outside:
+            # reschedule outside
             try:
                 from .notif_service import NotifService
                 users = self.app.bot_data.get("users_repo")

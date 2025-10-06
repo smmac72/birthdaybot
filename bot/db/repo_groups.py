@@ -10,13 +10,11 @@ import sqlite3
 
 class GroupsRepo:
     def __init__(self, db_path: str):
-        # sqlite file path
         self.db_path = db_path
 
     # internal
 
     def _open(self):
-        # connection coroutine (do not await here)
         return aiosqlite.connect(self.db_path)
 
     # schema / migrations
@@ -47,8 +45,7 @@ class GroupsRepo:
         gm_cols = {row[1] for row in gm_info}
         gm_notnull = {row[1]: bool(row[3]) for row in gm_info}  # notnull flag
 
-        # if legacy column user_id exists or has notnull -> hard rebuild table
-        # also rebuild if we miss new columns entirely
+        # hard rebuild table if legacy exists
         legacy_needs_rebuild = (
             ("user_id" in gm_cols) or
             ("username" in gm_cols) or
@@ -58,7 +55,7 @@ class GroupsRepo:
         if legacy_needs_rebuild:
             await self._rebuild_group_members(db, gm_cols)
 
-        # add missing columns on new table (idempotent)
+        # add missing columns on new table
         cur = await db.execute("PRAGMA table_info(group_members)")
         gm_cols = {row[1] for row in await cur.fetchall()}
         if "member_user_id" not in gm_cols:
@@ -81,8 +78,6 @@ class GroupsRepo:
         """, (int(time.time()),))
 
         # --- UNIQUE indexes for UPSERTs ---
-        # NOTE: UPSERT target (ON CONFLICT(...)) НЕ работает по partial unique indexes в SQLite.
-        # Поэтому добавляем ПОЛНЫЕ (без WHERE) уникальные индексы с новыми именами.
         await db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_gm_unique_uid_full
                       ON group_members(group_id, member_user_id)
@@ -92,7 +87,7 @@ class GroupsRepo:
                       ON group_members(group_id, member_username)
         """)
 
-        # (Старые частичные индексы оставляем для совместимости/производительности; они не мешают.)
+        # legacy, don't want to mess around this TODO
         await db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_gm_unique_uid
                       ON group_members(group_id, member_user_id)
@@ -192,7 +187,6 @@ class GroupsRepo:
         await db.execute("ALTER TABLE group_members_new RENAME TO group_members")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_gm_group ON group_members(group_id)")
 
-        # Создаём ПОЛНЫЕ unique индексы (для UPSERT)
         await db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_gm_unique_uid_full
                       ON group_members(group_id, member_user_id)
@@ -202,7 +196,7 @@ class GroupsRepo:
                       ON group_members(group_id, member_username)
         """)
 
-        # Оставляем также частичные индексы
+        # legacy again TODO
         await db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_gm_unique_uid
                       ON group_members(group_id, member_user_id)
@@ -216,7 +210,6 @@ class GroupsRepo:
         await db.execute("PRAGMA foreign_keys=ON")
 
     # helpers
-
     async def _ensure_creator_member(self, db: aiosqlite.Connection, group_id: str, creator_user_id: int) -> None:
         # ensure owner present in gm; add with username if available
         cur = await db.execute(
@@ -238,7 +231,6 @@ class GroupsRepo:
         )
 
     # queries
-
     async def create_group(self, name: str, creator_user_id: int) -> tuple[str, str]:
         async with self._open() as db:
             db.row_factory = sqlite3.Row

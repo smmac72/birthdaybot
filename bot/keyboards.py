@@ -1,20 +1,15 @@
 from __future__ import annotations
 
 from telegram import ReplyKeyboardMarkup
-
-# pull strings from i18n
 from .i18n import t
 
 
 def _kb(rows: list[list[str]]) -> ReplyKeyboardMarkup:
-    # single place to set common flags
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=False)
 
 
 # ----- main menu -----
-
 def main_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
-    # 2x2 + about on last row
     return _kb(
         [
             [t("btn_birthdays", update=update, context=context), t("btn_groups", update=update, context=context)],
@@ -25,7 +20,6 @@ def main_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
 
 
 # ----- groups -----
-
 def groups_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
     return _kb(
         [
@@ -34,7 +28,6 @@ def groups_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
             [t("btn_back_main", update=update, context=context)],
         ]
     )
-
 
 def group_mgmt_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
     return _kb(
@@ -47,7 +40,6 @@ def group_mgmt_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
 
 
 # ----- friends -----
-
 def friends_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
     return _kb(
         [
@@ -58,7 +50,6 @@ def friends_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
 
 
 # ----- settings -----
-
 def settings_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
     return _kb(
         [
@@ -70,9 +61,7 @@ def settings_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
 
 
 # ----- about / donate -----
-
 def about_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
-    # donate amounts are literal to match regexes in handlers: r"^\⭐ 50$", etc.
     return _kb(
         [
             ["⭐ 50", "⭐ 100"],

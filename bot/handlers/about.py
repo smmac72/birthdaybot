@@ -38,7 +38,7 @@ class AboutHandler:
             title=title,
             description=desc,
             payload=payload,
-            provider_token="",  # stars mode, no external provider
+            provider_token="", # stars mode, no external provider
             currency="XTR",
             prices=[LabeledPrice(label=f"{stars} stars", amount=stars)],
             is_flexible=False,
@@ -53,7 +53,7 @@ class AboutHandler:
     async def successful_payment(self, update: Update, _context: ContextTypes.DEFAULT_TYPE):
         try:
             sp = update.message.successful_payment
-            amount = sp.total_amount  # for XTR this equals stars
+            amount = sp.total_amount # for XTR this equals stars
             await update.message.reply_text(t("donate_thanks", update=update, context=_context, amount=amount))
         except Exception as e:
             self.log.exception("successful_payment handler failed: %s", e)

@@ -10,7 +10,6 @@ class UsersRepo:
         self.db_path = db_path
         self._lang_cache: dict[int, str] = {}
 
-    # always open fresh connection (avoids "threads can only be started once")
     def _open(self):
         return aiosqlite.connect(self.db_path)
 
@@ -47,7 +46,6 @@ class UsersRepo:
         return {k: row[k] for k in row.keys()}
 
     # create or update user
-
     async def ensure_user(self, tg_user, chat_id: Optional[int] = None) -> Dict[str, Any]:
         uid = int(tg_user.id)
         uname = tg_user.username or None
@@ -78,7 +76,6 @@ class UsersRepo:
             return d
 
     # updates
-
     async def update_chat_id(self, user_id: int, chat_id: int) -> None:
         async with self._open() as db:
             db.row_factory = sqlite3.Row
@@ -132,7 +129,6 @@ class UsersRepo:
         return self._lang_cache.get(user_id)
 
     # reads
-
     async def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
         async with self._open() as db:
             db.row_factory = sqlite3.Row
@@ -163,7 +159,6 @@ class UsersRepo:
         return await self.get_user_by_username(username)
 
     # batches for notif service
-
     async def list_all_users_with_bday(self) -> List[Dict[str, Any]]:
         async with self._open() as db:
             db.row_factory = sqlite3.Row
@@ -198,3 +193,16 @@ class UsersRepo:
             cur = await db.execute("select user_id from users")
             rows = await cur.fetchall()
             return [int(r["user_id"]) for r in rows if r and r["user_id"] is not None]
+        
+    # for ISSUE-2 - update alert values
+    async def update_alert_days_time(self, user_id: int, days: int, time_str: str) -> None:
+        async with self._open() as db:
+            await db.execute(
+                """
+                update users
+                set alert_days = ?, alert_time = ?
+                where user_id = ?
+                """,
+                (int(days), str(time_str), int(user_id)),
+            )
+            await db.commit()

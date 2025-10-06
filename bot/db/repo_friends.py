@@ -7,7 +7,6 @@ class FriendsRepo:
         self.db_path = db_path
 
     async def _ensure_schema(self, db) -> None:
-        # keep schema small and stable
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS friends(
@@ -26,12 +25,9 @@ class FriendsRepo:
         await db.execute("CREATE INDEX IF NOT EXISTS idx_f_friend_un ON friends(LOWER(friend_username))")
 
     # ------- public api -------
-
     async def list_for_user(self, owner_user_id: int) -> List[Dict[str, Any]]:
         """
-        Возвращает друзей владельца, предпочитая каноничные данные из таблицы users,
-        если friend_user_id присутствует. Это гарантирует, что обновления профиля
-        (например, дата рождения) сразу видны в списках.
+        returns user's friends
         """
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
@@ -103,7 +99,9 @@ class FriendsRepo:
             return cur.rowcount > 0
 
     async def count_followers(self, *, user_id: Optional[int], username_lower: Optional[str]) -> int:
-        # how many owners track this person (by id or username match when id is null)
+        """
+        how many owners track this person (by id or username match when id is null)
+        """
         total = 0
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row

@@ -29,10 +29,10 @@ async def admin_notify(*, db_path: str, application, level: str, source: str, me
             )
             await db.commit()
     except Exception:
-        # swallow db issues — we don't want to loop on errors
+        # swallow db issues
         pass
 
-    # send to admin chat via main bot (optional)
+    # send to admin chat via main bot
     chat_id = getattr(config, "ADMIN_CHAT_ID", 0) or 0
     if not chat_id:
         return
@@ -40,5 +40,4 @@ async def admin_notify(*, db_path: str, application, level: str, source: str, me
         text = f"[{level.upper()}] {source}\n{message}"
         await application.bot.send_message(chat_id=chat_id, text=text[:4000])
     except Exception:
-        # ignore telegram failures silently
         pass
