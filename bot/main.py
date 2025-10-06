@@ -261,6 +261,7 @@ def build_application() -> Application:
     for ch in groups_handler.conversation_handlers():
         app.add_handler(ch, group=0)
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_groups")), groups_handler.menu_entry), group=0)
+    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_groups_manage")), groups_handler.manage_menu), group=0)
 
     # friends flows
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_friends")), friends_handler.menu_entry), group=1)

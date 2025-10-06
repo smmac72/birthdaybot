@@ -40,7 +40,8 @@ def _fmt_bday(d: Optional[int], m: Optional[int], y: Optional[int]) -> str:
 
 def _parse_bday(text: str):
     ttxt = (text or "").strip()
-    m = re.search(r"\b(\d{2})-(\d{2})(?:-(\d{4}))?\b", ttxt)
+    # accept DD-MM or DD.MM, optional -YYYY/.YYYY
+    m = re.search(r"\b(\d{2})[-.](\d{2})(?:[-.](\d{4}))?\b", ttxt)
     if not m:
         return None
     d = int(m.group(1))
@@ -63,7 +64,7 @@ def _gmt_label(tz_val) -> str:
 
 
 def _alert_time_valid(s: str) -> bool:
-    m = re.match(r"^\s*(\d{1,2}):(\d{2})\s*$", s or "")
+    m = re.match(r"^\s*(\d{1,2}):(\d{1,2})\s*$", s or "")
     if not m:
         return False
     hh = int(m.group(1))
@@ -146,11 +147,12 @@ class SettingsHandler:
                 time=alert_time,
             ),
             t(
-                "settings_followers",
+                "settings_followers_total",
                 update=update,
                 context=context,
                 f_friends=followers_friends,
                 f_groups=followers_groups,
+                f_total=(followers_friends + followers_groups),
             ),
             "",
             t("choose_action", update=update, context=context),
@@ -357,6 +359,7 @@ class SettingsHandler:
         rows = [[language_button_text(c)] for c in (available_languages() or ["ru", "en"])]
         rows.append([t("btn_cancel", update=update, context=context)])
         kb = ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
+        context.user_data["__lang_mode"] = True  # (12) guard accidental matches
         await update.message.reply_text(
             t("settings_lang_pick", update=update, context=context, lang=lbl),
             reply_markup=kb,
@@ -367,6 +370,7 @@ class SettingsHandler:
         choice = (update.message.text or "").strip()
 
         if choice == t("btn_cancel", update=update, context=context):
+            context.user_data.pop("__lang_mode", None)
             await update.message.reply_text(
                 t("canceled", update=update, context=context),
                 reply_markup=settings_menu_kb(update=update, context=context),
@@ -386,6 +390,7 @@ class SettingsHandler:
 
         set_lang(code, context=context)
         lbl = language_label(code)
+        context.user_data.pop("__lang_mode", None)
         await update.message.reply_text(
             t("settings_lang_set_ok", update=update, context=context, lang=lbl),
             reply_markup=settings_menu_kb(update=update, context=context),

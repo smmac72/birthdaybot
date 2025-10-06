@@ -146,7 +146,6 @@ donate_thanks: "спасибо за поддержку! получено {amount
 alert_age_part: " (исполнится {n})"
 alert_today: "сегодня день рождения у @{name}{age}!"
 alert_in_days: "у @{name}{age} день рождения через {days} дн. ({date})!"
-turns_age: "исполнится {age}"
 test_alert: "тестовое уведомление: у участника будет др через {hours} ч."
 
 # general new/used

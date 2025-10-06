@@ -25,17 +25,17 @@ STATE_WAIT_DEL_MEMBER = 5
 def _log_id() -> str:
     return uuid.uuid4().hex[:8]
 
-def _cancel_kb(context: Optional[ContextTypes.DEFAULT_TYPE] = None) -> ReplyKeyboardMarkup:
+def _cancel_kb(update: Optional[Update] = None, context: Optional[ContextTypes.DEFAULT_TYPE] = None) -> ReplyKeyboardMarkup:
     # single cancel button localized
-    return ReplyKeyboardMarkup([[t("btn_cancel")]], resize_keyboard=True, one_time_keyboard=True)
+    return ReplyKeyboardMarkup([[t("btn_cancel", update=update, context=context)]], resize_keyboard=True, one_time_keyboard=True)
 
 def _icon_registered(user_id: Optional[int]) -> str:
     return "✅" if user_id else "⚪️"
 
-def _fmt_bday(d, m, y) -> str:
+def _fmt_bday(d, m, y, *, update=None, context=None) -> str:
     if d and m:
         return f"{int(d):02d}-{int(m):02d}" + (f"-{int(y)}" if y else "")
-    return t("when_unknown")
+    return t("when_unknown", update=update, context=context)
 
 def _days_until_key(d: Optional[int], m: Optional[int]) -> int:
     if not d or not m:
@@ -50,20 +50,43 @@ def _days_until_key(d: Optional[int], m: Optional[int]) -> int:
         target = target.replace(year=today.year + 1)
     return (target - today).days
 
-def _when_str(days: int) -> str:
+def _when_str(days: int, *, update=None, context=None) -> str:
     if days == 0:
-        return t("when_today")
+        return t("when_today", update=update, context=context)
     if days >= 10**8:
-        return t("when_unknown")
-    return t("when_in_days").format(n=days)
+        return t("when_unknown", update=update, context=context)
+    return t("when_in_days", update=update, context=context, n=days)
 
-def _member_line(m: Dict[str, Any]) -> str:
+def _member_line(m: Dict[str, Any], *, update=None, context=None) -> str:
     icon = _icon_registered(m.get("user_id"))
-    name = f"@{m['username']}" if m.get("username") else (f"id:{m['user_id']}" if m.get("user_id") else "unknown")
-    bd = _fmt_bday(m.get("birth_day"), m.get("birth_month"), m.get("birth_year"))
+    name = f"@{m['username']}" if m.get("username") else (f"id:{m['user_id']}" if m.get("user_id") else t("label_unknown", update=update, context=context))
+    bd = _fmt_bday(m.get("birth_day"), m.get("birth_month"), m.get("birth_year"), update=update, context=context)
     dleft = _days_until_key(m.get("birth_day"), m.get("birth_month"))
-    when = _when_str(dleft)
+    when = _when_str(dleft, update=update, context=context)
     return f"• {icon} {name} — {bd} ({when})"
+
+# --- bday parser that accepts DD-MM(-YYYY) and DD.MM(.YYYY) ---
+_BDAY_RE = re.compile(r"\b(\d{2})[-.](\d{2})(?:[-.](\d{4}))?\b")
+
+def _parse_bday(text: str):
+    m = _BDAY_RE.search((text or "").strip())
+    if not m:
+        return None
+    d, mo = int(m.group(1)), int(m.group(2))
+    y = int(m.group(3)) if m.group(3) else None
+    # soft validate calendar bounds
+    if not (1 <= d <= 31 and 1 <= mo <= 12):
+        return None
+    if y is not None and (y < 1900 or y > 2100):
+        return None
+    try:
+        import datetime as dt
+        _ = dt.date(y if y else 2000, mo, d)
+    except ValueError:
+        # allow 29-02 with year unset; otherwise reject
+        if not (mo == 2 and d == 29 and y is None):
+            return None
+    return d, mo, y
 
 class GroupsHandler:
     def __init__(self, groups: GroupsRepo, users: UsersRepo):
@@ -83,20 +106,22 @@ class GroupsHandler:
             self.log.info("[%s] menu_entry: groups_count=%s", rid, cnt)
         except Exception as e:
             self.log.exception("[%s] menu_entry failed: %s", rid, e)
-            await update.message.reply_text(t("not_found"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("not_found", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return
 
         if not rows:
-            await update.message.reply_text(t("groups_none"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_none", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return
 
-        lines = [t("groups_list_header"), ""]
+        lines = [t("groups_list_header", update=update, context=context), ""]
         for g in rows:
             g = dict(g)
-            mark = t("groups_creator_mark") if g.get("creator_user_id") == uid else ""
-            lines.append(f"📌 {g['name']} (код: {g['code']}) — {int(g.get('member_count', 0))} {t('label_members')}{mark}")
+            mark = t("groups_creator_mark", update=update, context=context) if g.get("creator_user_id") == uid else ""
+            lines.append(
+                f"📌 {g['name']} (код: {g['code']}) — {int(g.get('member_count', 0))} {t('label_members', update=update, context=context)}{mark}"
+            )
 
-        await update.message.reply_text("\n".join(lines + ["", t("choose_action")]), reply_markup=groups_menu_kb(context=context))
+        await update.message.reply_text("\n".join(lines + ["", t("choose_action", update=update, context=context)]), reply_markup=groups_menu_kb(update=update, context=context))
 
     # managed groups list
     async def manage_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -108,40 +133,46 @@ class GroupsHandler:
         managed = [dict(r) for r in rows if int(r.get("creator_user_id", 0)) == uid]
 
         if not managed:
-            await update.message.reply_text(t("groups_manage_need"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_manage_need", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return
 
-        # button text stays the same shape to keep regex simple
-        kb = ReplyKeyboardMarkup(
-            [[f"🛠 {g['name']} ({g['code']})"] for g in managed] + [[t("btn_exit")]],
-            resize_keyboard=True,
-            one_time_keyboard=True,
-        )
-        await update.message.reply_text(t("groups_manage_pick"), reply_markup=kb)
+        kb_rows = [[f"🛠 {g['name']} ({g['code']})"] for g in managed]
+        kb_rows.append([t("btn_back", update=update, context=context)])
 
-    async def _render_group_members(self, update: Update, gid: str) -> List[Dict[str, Any]]:
+        kb = ReplyKeyboardMarkup(kb_rows, resize_keyboard=True, one_time_keyboard=True)
+        await update.message.reply_text(t("groups_manage_pick", update=update, context=context), reply_markup=kb)
+
+    async def _render_group_members(self, update: Update, context: ContextTypes.DEFAULT_TYPE, gid: str) -> List[Dict[str, Any]]:
         members = await self.groups.list_members(gid)
         members = [dict(m) for m in members]
         members.sort(key=lambda m: _days_until_key(m.get("birth_day"), m.get("birth_month")))
-        lines = [t("groups_members_header").format(n=len(members))]
+        lines = [t("groups_members_header", update=update, context=context).format(n=len(members))]
         for m in members:
-            lines.append(_member_line(m))
+            lines.append(_member_line(m, update=update, context=context))
         await update.message.reply_text("\n".join(lines))
         return members
 
+    async def back_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        gid = context.user_data.get("mgmt_gid")
+        if gid:
+            context.user_data.pop("mgmt_gid", None)
+            await self.manage_menu(update, context)
+        else:
+            await self.menu_entry(update, context)
+
     # create
     async def create_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(t("groups_create_prompt"), reply_markup=_cancel_kb(context))
+        await update.message.reply_text(t("groups_create_prompt", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
         return STATE_WAIT_GROUP_NAME
 
     async def create_wait_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (update.message.text or "").strip()
-        if text == t("btn_cancel"):
-            await update.message.reply_text(t("canceled"), reply_markup=groups_menu_kb(context=context))
+        if text == t("btn_cancel", update=update, context=context):
+            await update.message.reply_text(t("canceled", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return ConversationHandler.END
         name = text
         gid, code = await self.groups.create_group(name, update.effective_user.id)
-        await update.message.reply_text(t("groups_created").format(name=name, code=code), reply_markup=groups_menu_kb(context=context))
+        await update.message.reply_text(t("groups_created", update=update, context=context).format(name=name, code=code), reply_markup=groups_menu_kb(update=update, context=context))
 
         # reschedule for creator
         notif = context.application.bot_data.get("notif_service")
@@ -156,17 +187,17 @@ class GroupsHandler:
 
     # join
     async def join_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(t("groups_join_prompt"), reply_markup=_cancel_kb(context))
+        await update.message.reply_text(t("groups_join_prompt", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
         return STATE_WAIT_JOIN_CODE
 
     async def join_wait_code(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         code = (update.message.text or "").strip()
-        if code == t("btn_cancel"):
-            await update.message.reply_text(t("canceled"), reply_markup=groups_menu_kb(context=context))
+        if code == t("btn_cancel", update=update, context=context):
+            await update.message.reply_text(t("canceled", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return ConversationHandler.END
         ok, name = await self.groups.join_by_code(code, update.effective_user.id)
         if ok:
-            await update.message.reply_text(t("groups_join_ok").format(name=name), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_join_ok", update=update, context=context).format(name=name), reply_markup=groups_menu_kb(update=update, context=context))
             notif = context.application.bot_data.get("notif_service")
             if notif:
                 try:
@@ -175,22 +206,22 @@ class GroupsHandler:
                 except Exception as e:
                     self.log.exception("reschedule after join failed: %s", e)
         else:
-            await update.message.reply_text(t("groups_join_fail"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_join_fail", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
         return ConversationHandler.END
 
     # leave
     async def leave_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(t("groups_leave_prompt"), reply_markup=_cancel_kb(context))
+        await update.message.reply_text(t("groups_leave_prompt", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
         return STATE_WAIT_LEAVE_CODE
 
     async def leave_wait_code(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         code = (update.message.text or "").strip()
-        if code == t("btn_cancel"):
-            await update.message.reply_text(t("canceled"), reply_markup=groups_menu_kb(context=context))
+        if code == t("btn_cancel", update=update, context=context):
+            await update.message.reply_text(t("canceled", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return ConversationHandler.END
         ok, name = await self.groups.leave_by_code(code, update.effective_user.id)
         if ok:
-            await update.message.reply_text(t("groups_leave_ok").format(name=name), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_leave_ok", update=update, context=context).format(name=name), reply_markup=groups_menu_kb(update=update, context=context))
             notif = context.application.bot_data.get("notif_service")
             if notif:
                 try:
@@ -199,7 +230,7 @@ class GroupsHandler:
                 except Exception as e:
                     self.log.exception("reschedule after leave failed: %s", e)
         else:
-            await update.message.reply_text(t("groups_leave_fail"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_leave_fail", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
         return ConversationHandler.END
 
     # manage entry
@@ -207,67 +238,67 @@ class GroupsHandler:
         text = (update.message.text or "")
         m = re.match(r"^🛠\s+(.+)\s+\(([\w-]+)\)$", text)
         if not m:
-            await update.message.reply_text(t("groups_pick_from_menu"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_pick_from_menu", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return ConversationHandler.END
         code = m.group(2)
         g = await self.groups.get_by_code(code)
         if not g:
-            await update.message.reply_text(t("groups_not_found"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_not_found", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return ConversationHandler.END
 
         gid = g["group_id"]
         context.user_data["mgmt_gid"] = gid
 
-        await update.message.reply_text(f"{t('groups_label_group')}: {g['name']}")
-        await self._render_group_members(update, gid)
-        await update.message.reply_text(t("groups_manage_prompt"), reply_markup=group_mgmt_kb(context=context))
+        await update.message.reply_text(f"{t('groups_one_title', update=update, context=context)} {g['name']}")
+        await self._render_group_members(update, context, gid)
+        await update.message.reply_text(t("groups_manage_prompt", update=update, context=context), reply_markup=group_mgmt_kb(update=update, context=context))
         return ConversationHandler.END
 
     # rename
     async def rename_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         gid = context.user_data.get("mgmt_gid")
         if not gid:
-            await update.message.reply_text(t("groups_manage_need"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_manage_need", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return ConversationHandler.END
-        await update.message.reply_text(t("groups_rename_prompt"), reply_markup=_cancel_kb(context))
+        await update.message.reply_text(t("groups_rename_prompt", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
         return STATE_WAIT_RENAME
 
     async def rename_wait(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         gid = context.user_data.get("mgmt_gid")
         if not gid:
-            await update.message.reply_text(t("groups_manage_need"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_manage_need", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return ConversationHandler.END
         text = (update.message.text or "").strip()
-        if text == t("btn_cancel"):
-            await update.message.reply_text(t("canceled"), reply_markup=group_mgmt_kb(context=context))
+        if text == t("btn_cancel", update=update, context=context):
+            await update.message.reply_text(t("canceled", update=update, context=context), reply_markup=group_mgmt_kb(update=update, context=context))
             return ConversationHandler.END
         await self.groups.rename_group(gid, text)
-        await update.message.reply_text(t("groups_rename_ok"))
-        await self._render_group_members(update, gid)
-        await update.message.reply_text(t("groups_manage_prompt"), reply_markup=group_mgmt_kb(context=context))
+        await update.message.reply_text(t("groups_rename_ok", update=update, context=context))
+        await self._render_group_members(update, context, gid)
+        await update.message.reply_text(t("groups_manage_prompt", update=update, context=context), reply_markup=group_mgmt_kb(update=update, context=context))
         return ConversationHandler.END
 
     # add member
     async def add_member_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         gid = context.user_data.get("mgmt_gid")
         if not gid:
-            await update.message.reply_text(t("groups_manage_need"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_manage_need", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return ConversationHandler.END
         await update.message.reply_text(
-            t("groups_add_member_prompt"),
-            reply_markup=_cancel_kb(context),
+            t("groups_add_member_prompt", update=update, context=context),
+            reply_markup=_cancel_kb(update=update, context=context),
         )
         return STATE_WAIT_ADD_MEMBER
 
     async def add_member_wait(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         gid = context.user_data.get("mgmt_gid")
         if not gid:
-            await update.message.reply_text(t("groups_manage_need"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_manage_need", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return ConversationHandler.END
 
         text = (update.message.text or "").strip()
-        if text == t("btn_cancel"):
-            await update.message.reply_text(t("canceled"), reply_markup=group_mgmt_kb(context=context))
+        if text == t("btn_cancel", update=update, context=context):
+            await update.message.reply_text(t("canceled", update=update, context=context), reply_markup=group_mgmt_kb(update=update, context=context))
             return ConversationHandler.END
 
         parts = text.split()
@@ -281,12 +312,7 @@ class GroupsHandler:
                 except Exception:
                     user_id = None
 
-        m = re.search(r"\b(\d{2})-(\d{2})(?:-(\d{4}))?\b", text)
-        bd = None
-        if m:
-            d, mo = int(m.group(1)), int(m.group(2))
-            y = int(m.group(3)) if m.group(3) else None
-            bd = (d, mo, y)
+        bd = _parse_bday(text)
 
         # resolve registered profile if possible
         prof = None
@@ -308,37 +334,37 @@ class GroupsHandler:
                     await notif.reschedule_for_follower(prof.get("user_id"))
                 except Exception as e:
                     self.log.exception("reschedule add member failed: %s", e)
-            await update.message.reply_text(t("groups_add_member_ok"))
+            await update.message.reply_text(t("groups_add_member_ok", update=update, context=context))
         else:
             if not bd:
-                await update.message.reply_text(t("groups_add_member_need_date"), reply_markup=_cancel_kb(context))
+                await update.message.reply_text(t("groups_add_member_need_date", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
                 return STATE_WAIT_ADD_MEMBER
             d, mo, y = bd
             await self.groups.add_member(gid, user_id, username, d, mo, y)
-            await update.message.reply_text(t("groups_add_member_ok"))
+            await update.message.reply_text(t("groups_add_member_ok", update=update, context=context))
 
-        await self._render_group_members(update, gid)
-        await update.message.reply_text(t("groups_manage_prompt"), reply_markup=group_mgmt_kb(context=context))
+        await self._render_group_members(update, context, gid)
+        await update.message.reply_text(t("groups_manage_prompt", update=update, context=context), reply_markup=group_mgmt_kb(update=update, context=context))
         return ConversationHandler.END
 
     # delete member
     async def del_member_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         gid = context.user_data.get("mgmt_gid")
         if not gid:
-            await update.message.reply_text(t("groups_manage_need"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_manage_need", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return ConversationHandler.END
-        await update.message.reply_text(t("groups_del_member_prompt"), reply_markup=_cancel_kb(context))
+        await update.message.reply_text(t("groups_del_member_prompt", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
         return STATE_WAIT_DEL_MEMBER
 
     async def del_member_wait(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         gid = context.user_data.get("mgmt_gid")
         if not gid:
-            await update.message.reply_text(t("groups_manage_need"), reply_markup=groups_menu_kb(context=context))
+            await update.message.reply_text(t("groups_manage_need", update=update, context=context), reply_markup=groups_menu_kb(update=update, context=context))
             return ConversationHandler.END
 
         text = (update.message.text or "").strip()
-        if text == t("btn_cancel"):
-            await update.message.reply_text(t("canceled"), reply_markup=group_mgmt_kb(context=context))
+        if text == t("btn_cancel", update=update, context=context):
+            await update.message.reply_text(t("canceled", update=update, context=context), reply_markup=group_mgmt_kb(update=update, context=context))
             return ConversationHandler.END
 
         if text.isdigit():
@@ -348,12 +374,12 @@ class GroupsHandler:
             target_id = None
             target_un = text[1:]
         else:
-            await update.message.reply_text(t("groups_del_member_prompt"))
+            await update.message.reply_text(t("groups_del_member_prompt", update=update, context=context))
             return STATE_WAIT_DEL_MEMBER
 
         # do not allow kicking self
         if target_id and target_id == update.effective_user.id:
-            await update.message.reply_text(t("groups_del_member_self"), reply_markup=group_mgmt_kb(context=context))
+            await update.message.reply_text(t("groups_del_member_self", update=update, context=context), reply_markup=group_mgmt_kb(update=update, context=context))
             return ConversationHandler.END
 
         ok = False
@@ -371,14 +397,16 @@ class GroupsHandler:
                 except Exception as e:
                     self.log.exception("reschedule after delete member failed: %s", e)
 
-        await update.message.reply_text(t("groups_del_member_ok") if ok else t("groups_del_member_fail"))
-        await self._render_group_members(update, gid)
-        await update.message.reply_text(t("groups_manage_prompt"), reply_markup=group_mgmt_kb(context=context))
+        await update.message.reply_text(t("groups_del_member_ok", update=update, context=context) if ok else t("groups_del_member_fail", update=update, context=context))
+        await self._render_group_members(update, context, gid)
+        await update.message.reply_text(t("groups_manage_prompt", update=update, context=context), reply_markup=group_mgmt_kb(update=update, context=context))
         return ConversationHandler.END
 
     def conversation_handlers(self):
-        # all entry points use i18n-driven button regex
+        # entry points and helpers
         return [
+            MessageHandler(filters.Regex(btn_regex("btn_back")), self.back_handler),
+
             ConversationHandler(
                 entry_points=[MessageHandler(filters.Regex(btn_regex("btn_group_create")), self.create_start)],
                 states={STATE_WAIT_GROUP_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.create_wait_name)]},
@@ -418,14 +446,14 @@ class GroupsHandler:
                 persistent=False,
             ),
             ConversationHandler(
-                entry_points=[MessageHandler(filters.Regex(btn_regex("btn_group_add_member")), self.add_member_start)],
+                entry_points=[MessageHandler(filters.Regex(btn_regex("btn_group_member_add")), self.add_member_start)],
                 states={STATE_WAIT_ADD_MEMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_member_wait)]},
                 fallbacks=[MessageHandler(filters.Regex(btn_regex("btn_cancel")), self.manage_menu)],
                 name="conv_group_add_member",
                 persistent=False,
             ),
             ConversationHandler(
-                entry_points=[MessageHandler(filters.Regex(btn_regex("btn_group_del_member")), self.del_member_start)],
+                entry_points=[MessageHandler(filters.Regex(btn_regex("btn_group_member_del")), self.del_member_start)],
                 states={STATE_WAIT_DEL_MEMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.del_member_wait)]},
                 fallbacks=[MessageHandler(filters.Regex(btn_regex("btn_cancel")), self.manage_menu)],
                 name="conv_group_del_member",

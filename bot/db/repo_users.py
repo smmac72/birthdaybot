@@ -30,11 +30,25 @@ class UsersRepo:
             )
             """
         )
-        # backfill lang if column just added
+        # backfill columns (safe-ALTER pattern)
         try:
             await db.execute("alter table users add column lang text default 'ru'")
         except Exception:
             pass
+        try:
+            await db.execute("alter table users add column chat_id integer")
+        except Exception:
+            pass
+        # ISSUE-2: new scheduling model (days + time)
+        try:
+            await db.execute("alter table users add column alert_days integer not null default 0")
+        except Exception:
+            pass
+        try:
+            await db.execute("alter table users add column alert_time text default '09:00'")
+        except Exception:
+            pass
+
         await db.execute("create index if not exists idx_users_username on users(username)")
         await db.execute("create index if not exists idx_users_chat on users(chat_id)")
         await db.commit()
@@ -165,7 +179,7 @@ class UsersRepo:
             await self._ensure_schema(db)
             cur = await db.execute(
                 """
-                select user_id, username, chat_id, birth_day, birth_month, birth_year, tz, alert_hours, lang
+                select user_id, username, chat_id, birth_day, birth_month, birth_year, tz, alert_hours, lang, alert_days, alert_time
                 from users
                 where birth_day is not null and birth_month is not null
                 """
@@ -183,6 +197,10 @@ class UsersRepo:
                     d["alert_hours"] = int(d.get("alert_hours", 0))
                 except Exception:
                     d["alert_hours"] = 0
+                try:
+                    d["alert_days"] = int(d.get("alert_days", 0)) if d.get("alert_days") is not None else None
+                except Exception:
+                    d["alert_days"] = None
                 out.append(d)
             return out
 
@@ -197,6 +215,7 @@ class UsersRepo:
     # for ISSUE-2 - update alert values
     async def update_alert_days_time(self, user_id: int, days: int, time_str: str) -> None:
         async with self._open() as db:
+            await self._ensure_schema(db)
             await db.execute(
                 """
                 update users

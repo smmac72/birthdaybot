@@ -43,7 +43,7 @@ def _fmt_bday(d: Optional[int], m: Optional[int], y: Optional[int], *, update=No
 
 def _parse_bday(text: str):
     ttxt = (text or "").strip()
-    m = re.search(r"\b(\d{2})-(\d{2})(?:-(\d{4}))?\b", ttxt)
+    m = re.search(r"\b(\d{2})[-.](\d{2})(?:[-.](\d{4}))?\b", ttxt)
     if not m:
         return None
     d = int(m.group(1)); mo = int(m.group(2))
@@ -58,13 +58,15 @@ def _parse_bday(text: str):
     except ValueError:
         if not (mo == 2 and d == 29):
             return None
-        # 29 feb without leap-year -> accept by dropping year later
     return d, mo, y
 
-def _days_until_key(d: Optional[int], m: Optional[int]) -> int:
+def _days_until_key_user_tz(d: Optional[int], m: Optional[int], *, tz_hours: int) -> int:
     if not d or not m:
         return 10**9
-    today = dt.date.today()
+    # compute "today" in user's tz
+    now_utc = dt.datetime.now(dt.timezone.utc)
+    tz = dt.timezone(dt.timedelta(hours=int(tz_hours or 0)))
+    today = now_utc.astimezone(tz).date()
     try:
         target = dt.date(today.year, m, d)
     except ValueError:
@@ -94,7 +96,11 @@ class FriendsHandler:
             await update.message.reply_text(t("not_found", update=update, context=context), reply_markup=friends_menu_kb(update=update, context=context))
             return
 
-        rows.sort(key=lambda r: _days_until_key(r.get("birth_day"), r.get("birth_month")))
+        # read user's tz for proper "today"
+        uprof = await self.users.get_user(uid)
+        tz_hours = int((uprof or {}).get("tz") or 0)
+
+        rows.sort(key=lambda r: _days_until_key_user_tz(r.get("birth_day"), r.get("birth_month"), tz_hours=tz_hours))
 
         lines = [t("friends_header", update=update, context=context)] if rows else [
             t("friends_empty", update=update, context=context)
@@ -105,7 +111,7 @@ class FriendsHandler:
                 f"id:{r['friend_user_id']}" if r.get("friend_user_id") else "unknown"
             )
             bd = _fmt_bday(r.get("birth_day"), r.get("birth_month"), r.get("birth_year"), update=update, context=context)
-            dleft = _days_until_key(r.get("birth_day"), r.get("birth_month"))
+            dleft = _days_until_key_user_tz(r.get("birth_day"), r.get("birth_month"), tz_hours=tz_hours)
             when = _when_str(dleft, update=update, context=context)
             lines.append(f"{icon} {name} — {bd} ({when})")
 
@@ -168,15 +174,15 @@ class FriendsHandler:
         if bday:
             d, mo, y = bday
             # soft fix: if 29-02 with non-leap year -> drop year
-            if y is not None:
-                try:
+            try:
+                if y is not None:
                     dt.date(y, mo, d)
-                except ValueError:
-                    if mo == 2 and d == 29:
-                        y = None
-                    else:
-                        await update.message.reply_text(t("friends_add_date_bad", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
-                        return STATE_WAIT_ADD
+            except ValueError:
+                if mo == 2 and d == 29:
+                    y = None
+                else:
+                    await update.message.reply_text(t("friends_add_date_bad", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
+                    return STATE_WAIT_ADD
 
             await self.friends.add_friend(
                 uid,
