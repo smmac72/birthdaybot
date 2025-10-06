@@ -81,7 +81,7 @@ The repository includes an automatic deployment workflow in
 -  **Docker + Compose**
 -  **GitHub Actions** for CI/CD
 
-## 🧰 Maintenance mode
+## Maintenance mode
 Admins can toggle maintenance mode via database table `admin_state`.
 Does it work? lmao no
 Modes:
@@ -89,9 +89,9 @@ Modes:
 -  `on:soft` — menus disabled; reminders paused
 -  `on:hard` — bot fully stops
 
-## 📄 License
+## License
 MIT © 2025 [smmac72](https://github.com/smmac72)
 
-## 💖 Support
+## Support
 If you enjoy the bot — consider starring the repo ⭐
 or donating via Telegram Stars in the About menu!
