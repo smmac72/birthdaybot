@@ -1,2 +1,4 @@
 python-telegram-bot==20.4
+aiosqlite==0.20.0
+python-telegram-bot[job-queue]==20.4
 pytz

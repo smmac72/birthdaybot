@@ -1,0 +1,44 @@
+# python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# virtual envs
+.venv/
+venv/
+env/
+
+# tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# packaging
+build/
+dist/
+*.egg-info/
+
+# editors
+.vscode/
+.idea/
+
+# os junk
+.DS_Store
+Thumbs.db
+
+# local config and secrets
+bot/config.py
+.env
+.env.*
+
+# local data (db etc.)
+/birthday_bot.db
+*.db
+*.sqlite*
+*.sqlite3
+
+# logs
+*.log
+logs/
