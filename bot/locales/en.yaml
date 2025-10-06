@@ -27,7 +27,7 @@ groups_label: " (in groups: {names})"
 # Main menu buttons
 btn_birthdays: "🎂 Birthdays"
 btn_groups: "👪 Groups"
-btn_friends: "👥 Friends management"
+btn_friends: "👥 Friends"
 btn_settings: "⚙️ Settings"
 btn_about: "ℹ️ About"
 
@@ -137,7 +137,7 @@ birthdays_empty: "No contacts yet. Add friends or join groups."
 birthdays_header: "Upcoming birthdays:\n"
 
 # About
-about_text: "We’re open source! You can explore the code, send me some telegram stars or reach out directly at @smmac72.\n\n<a href=\"https://github.com/smmac72/birthdaybot\">GitHub</a>\n<a href=\"https://github.com/smmac72/birthdaybot/issues\">GitHub Issues</a>\n\nThis bot reminds you about birthdays: friends, groups, timezones, and early alerts."
+about_text: "We’re open source! You can explore the code, send me some telegram stars or reach out directly at @smmac72.\nAlso I personally bought the only ad space here for you to look at my portfolio - www.zeromac.ru\n\n<a href=\"https://github.com/smmac72/birthdaybot\">GitHub</a>\n<a href=\"https://github.com/smmac72/birthdaybot/issues\">GitHub Issues</a>\n\nThis bot reminds you about birthdays: friends, groups, timezones, and early alerts."
 donate_title: "Support the project ({stars}⭐)"
 donate_desc: "Donation for the BirthdayBot development team (me)"
 donate_thanks: "Thanks for the support! Received {amount}⭐"
