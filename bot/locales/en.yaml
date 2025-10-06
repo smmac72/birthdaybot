@@ -137,7 +137,7 @@ birthdays_empty: "no contacts yet. add friends or join groups."
 birthdays_header: "upcoming birthdays:\n"
 
 # about
-about_text: "we’re open source.\ngithub: https://github.com/smmac72/birthdaybot\nissues: https://github.com/smmac72/birthdaybot/issues\n\nthis bot reminds you about birthdays: friends, groups, timezones and early alerts."
+about_text: "we’re open source, hence I can place a donate button here, right? anyways, you can contact me at @smmac72 anytime.\ngithub: https://github.com/smmac72/birthdaybot\nissues: https://github.com/smmac72/birthdaybot/issues\n\nthis bot reminds you about birthdays: friends, groups, timezones and early alerts."
 donate_title: "support the project ({stars}⭐)"
 donate_desc: "donation for birthdaybot development"
 donate_thanks: "thanks for the support! received {amount}⭐"
