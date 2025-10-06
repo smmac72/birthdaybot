@@ -6,6 +6,8 @@
 
 An open-source **Telegram bot** that reminds you about birthdays of friends and group members — with timezones, alerts, wishlists, and maintenance mode.
 
+## [Active bot link](https://t.me/BirthdayAlertsBot)
+
 ## Features
 - Personal and group birthday tracking
 - Early alerts
