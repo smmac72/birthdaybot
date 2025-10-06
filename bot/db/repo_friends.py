@@ -28,18 +28,27 @@ class FriendsRepo:
     # ------- public api -------
 
     async def list_for_user(self, owner_user_id: int) -> List[Dict[str, Any]]:
-        # new connection every time to avoid aiosqlite thread reuse error
+        """
+        Возвращает друзей владельца, предпочитая каноничные данные из таблицы users,
+        если friend_user_id присутствует. Это гарантирует, что обновления профиля
+        (например, дата рождения) сразу видны в списках.
+        """
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             await self._ensure_schema(db)
             cur = await db.execute(
                 """
-                SELECT owner_user_id,
-                       friend_user_id,
-                       friend_username,
-                       birth_day, birth_month, birth_year
-                FROM friends
-                WHERE owner_user_id = ?
+                SELECT
+                    f.owner_user_id,
+                    f.friend_user_id,
+                    COALESCE(u.username, f.friend_username)    AS friend_username,
+                    COALESCE(u.birth_day,   f.birth_day)        AS birth_day,
+                    COALESCE(u.birth_month, f.birth_month)      AS birth_month,
+                    COALESCE(u.birth_year,  f.birth_year)       AS birth_year
+                FROM friends f
+                LEFT JOIN users u
+                       ON u.user_id = f.friend_user_id
+                WHERE f.owner_user_id = ?
                 """,
                 (owner_user_id,),
             )

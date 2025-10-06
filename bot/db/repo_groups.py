@@ -80,7 +80,19 @@ class GroupsRepo:
                SET joined_at = CASE WHEN joined_at IS NULL OR joined_at = 0 THEN ? ELSE joined_at END
         """, (int(time.time()),))
 
-        # unique partial indexes
+        # --- UNIQUE indexes for UPSERTs ---
+        # NOTE: UPSERT target (ON CONFLICT(...)) НЕ работает по partial unique indexes в SQLite.
+        # Поэтому добавляем ПОЛНЫЕ (без WHERE) уникальные индексы с новыми именами.
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_gm_unique_uid_full
+                      ON group_members(group_id, member_user_id)
+        """)
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_gm_unique_uname_full
+                      ON group_members(group_id, member_username)
+        """)
+
+        # (Старые частичные индексы оставляем для совместимости/производительности; они не мешают.)
         await db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_gm_unique_uid
                       ON group_members(group_id, member_user_id)
@@ -179,6 +191,18 @@ class GroupsRepo:
         await db.execute("DROP TABLE group_members")
         await db.execute("ALTER TABLE group_members_new RENAME TO group_members")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_gm_group ON group_members(group_id)")
+
+        # Создаём ПОЛНЫЕ unique индексы (для UPSERT)
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_gm_unique_uid_full
+                      ON group_members(group_id, member_user_id)
+        """)
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_gm_unique_uname_full
+                      ON group_members(group_id, member_username)
+        """)
+
+        # Оставляем также частичные индексы
         await db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_gm_unique_uid
                       ON group_members(group_id, member_user_id)

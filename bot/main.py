@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Tuple, Optional
+from typing import Tuple
 
 from telegram import Update
 from telegram.ext import (
@@ -28,6 +28,7 @@ from .handlers.groups import GroupsHandler
 from .handlers.friends import FriendsHandler
 from .handlers.settings import SettingsHandler, S_WAIT_BDAY, S_WAIT_TZ, S_WAIT_ALERT
 from .handlers.about import AboutHandler
+from .handlers.birthdays import BirthdaysHandler  # <-- use dedicated handler
 
 # keyboards
 from .keyboards import main_menu_kb
@@ -61,132 +62,6 @@ async def show_main_menu(update: Update, _):
     await update.message.reply_text("главное меню:", reply_markup=main_menu_kb())
 
 
-# birthdays overview inlined here
-async def show_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    log = logging.getLogger("birthdays")
-    users: UsersRepo = context.application.bot_data["users_repo"]
-    groups: GroupsRepo = context.application.bot_data["groups_repo"]
-    friends: FriendsRepo = context.application.bot_data["friends_repo"]
-
-    uid = update.effective_user.id
-    uname = (update.effective_user.username or "").lower()
-
-    # helpers
-
-    def _icon_registered(user_id: Optional[int]) -> str:
-        return "✅" if user_id else "⚪️"
-
-    def _fmt_bday(d, m, y) -> str:
-        if d and m:
-            return f"{int(d):02d}-{int(m):02d}" + (f"-{int(y)}" if y else "")
-        return "не указан"
-
-    def _days_key(d, m) -> int:
-        if not d or not m:
-            return 10**9
-        import datetime as dt
-        today = dt.date.today()
-        try:
-            t = dt.date(today.year, int(m), int(d))
-        except Exception:
-            return 10**9
-        if t < today:
-            t = t.replace(year=today.year + 1)
-        return (t - today).days
-
-    def _when(days: int) -> str:
-        if days == 0:
-            return "сегодня"
-        if days >= 10**8:
-            return "дата не указана"
-        return f"через {days} дн."
-
-    contacts: Dict[Tuple[Optional[int], Optional[str]], Dict] = {}
-
-    # collect friends
-    try:
-        f_rows = await friends.list_for_user(uid)
-        for r in f_rows:
-            d = dict(r)
-            key = (
-                d.get("friend_user_id"),
-                (d.get("friend_username") or "").lower() if d.get("friend_username") else None,
-            )
-            p = contacts.get(key) or {
-                "user_id": d.get("friend_user_id"),
-                "username": d.get("friend_username"),
-                "birth_day": d.get("birth_day"),
-                "birth_month": d.get("birth_month"),
-                "birth_year": d.get("birth_year"),
-                "as_friend": True,
-                "as_group": False,
-            }
-            p["as_friend"] = True
-            p["birth_day"] = p["birth_day"] or d.get("birth_day")
-            p["birth_month"] = p["birth_month"] or d.get("birth_month")
-            p["birth_year"] = p["birth_year"] or d.get("birth_year")
-            contacts[key] = p
-    except Exception as e:
-        log.exception("friends fetch failed: %s", e)
-
-    # collect co-members from groups
-    try:
-        g_rows = await groups.list_user_groups(uid)
-        for g in g_rows:
-            members = await groups.list_members(g["group_id"])
-            for m in members:
-                md = dict(m)
-                mid = md.get("user_id")
-                mname = (md.get("username") or "").lower() if md.get("username") else None
-                # skip self
-                if (mid and mid == uid) or (not mid and mname and mname == uname):
-                    continue
-                key = (mid, mname)
-                p = contacts.get(key) or {
-                    "user_id": mid,
-                    "username": md.get("username"),
-                    "birth_day": md.get("birth_day"),
-                    "birth_month": md.get("birth_month"),
-                    "birth_year": md.get("birth_year"),
-                    "as_friend": False,
-                    "as_group": True,
-                }
-                p["as_group"] = True
-                p["birth_day"] = p["birth_day"] or md.get("birth_day")
-                p["birth_month"] = p["birth_month"] or md.get("birth_month")
-                p["birth_year"] = p["birth_year"] or md.get("birth_year")
-                contacts[key] = p
-    except Exception as e:
-        log.exception("groups fetch failed: %s", e)
-
-    if not contacts:
-        await update.message.reply_text(
-            "контактов пока нет. добавьте друзей или вступите в группы.",
-            reply_markup=main_menu_kb(),
-        )
-        return
-
-    items = list(contacts.values())
-    items.sort(key=lambda x: _days_key(x.get("birth_day"), x.get("birth_month")))
-
-    lines = ["дни рождения:\n"]
-    for x in items:
-        icon = _icon_registered(x.get("user_id"))
-        name = f"@{x['username']}" if x.get("username") else (f"id:{x['user_id']}" if x.get("user_id") else "unknown")
-        bd = _fmt_bday(x.get("birth_day"), x.get("birth_month"), x.get("birth_year"))
-        dleft = _days_key(x.get("birth_day"), x.get("birth_month"))
-        when = _when(dleft)
-        tags = []
-        if x.get("as_friend"):
-            tags.append("ДРУГ")
-        if x.get("as_group"):
-            tags.append("В ГРУППЕ")
-        tag_str = f" [{' & '.join(tags)}]" if tags else ""
-        lines.append(f"• {icon} {name} — {bd} ({when}){tag_str}")
-
-    await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb())
-
-
 # global error handler
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.getLogger("birthdaybot").exception("unhandled error", exc_info=context.error)
@@ -215,8 +90,10 @@ async def who_follows_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not notif:
         await update.message.reply_text("notif service не готов.")
         return
-    txt = await notif.debug_followers(update.effective_user.id)
+    # оставляю как есть — предполагается, что метод есть в сервисе
+    txt = await notif.debug_followers(update.effective_user.id) if hasattr(notif, "debug_followers") else "нет отладочного вывода."
     await update.message.reply_text(txt)
+
 
 # build application and register handlers
 def build_application() -> Application:
@@ -238,6 +115,7 @@ def build_application() -> Application:
     friends_handler = FriendsHandler(users_repo, friends_repo, groups_repo)
     settings_handler = SettingsHandler(users_repo, friends_repo, groups_repo)
     about_handler = AboutHandler()
+    birthdays_handler = BirthdaysHandler(users_repo, friends_repo, groups_repo)
 
     # errors
     app.add_error_handler(on_error)
@@ -258,8 +136,8 @@ def build_application() -> Application:
         group=0,
     )
 
-    # birthdays screen
-    app.add_handler(MessageHandler(filters.Regex("^🎂 дни рождения$"), show_birthdays), group=0)
+    # birthdays screen (use proper handler)
+    app.add_handler(MessageHandler(filters.Regex("^🎂 дни рождения$"), birthdays_handler.menu_entry), group=0)
 
     # groups flows
     for ch in groups_handler.conversation_handlers():
@@ -322,6 +200,7 @@ def build_application() -> Application:
 
     # test alerts
     app.add_handler(CommandHandler("alert_test", alert_test_cmd), group=3)
+    app.add_handler(CommandHandler("who_follows", who_follows_cmd), group=3)
 
     # debug logger
     async def log_incoming(update: Update, _):

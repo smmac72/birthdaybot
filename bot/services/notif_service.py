@@ -3,8 +3,9 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple
 
+import aiosqlite
 from telegram.ext import Application, ContextTypes
 
 from .. import config
@@ -12,7 +13,7 @@ from ..db.repo_users import UsersRepo
 from ..db.repo_groups import GroupsRepo
 from ..db.repo_friends import FriendsRepo
 
-# small helpers
+# small helpers, all laid-back
 
 def _as_int(v, default: int = 0) -> int:
     try:
@@ -30,7 +31,6 @@ def _as_int(v, default: int = 0) -> int:
         return default
 
 def _tz_from_offset(hours: Optional[int]) -> dt.tzinfo:
-    # fixed offset only, fallback utc
     h = _as_int(hours, 0)
     return dt.timezone(dt.timedelta(hours=h))
 
@@ -65,10 +65,104 @@ class NotifService:
         self.log = logging.getLogger("notif")
         self._last_horizon: int = getattr(config, "SCHEDULE_HORIZON_DAYS", 7)
 
-    # ---------- public api ----------
+    # -------- idempotency storage with lazy migration --------
+
+    @property
+    def _db_path(self) -> str:
+        return getattr(self.users, "db_path")
+
+    async def _ensure_sent_schema(self) -> None:
+        # create table if brand new
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS notifications_sent(
+                    person_id   INTEGER NOT NULL,
+                    follower_id INTEGER NOT NULL,
+                    date_ymd    TEXT    NOT NULL,
+                    PRIMARY KEY(person_id, follower_id, date_ymd)
+                )
+            """)
+            await db.commit()
+
+        # check columns (handle old schema without follower_id)
+        async with aiosqlite.connect(self._db_path) as db:
+            cur = await db.execute("PRAGMA table_info(notifications_sent)")
+            cols = {row[1] for row in await cur.fetchall()}
+
+            if "follower_id" in cols:
+                # add unique index if missing (safe to create idempotently)
+                await db.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_notif_triplet
+                    ON notifications_sent(person_id, follower_id, date_ymd)
+                """)
+                await db.commit()
+                return
+
+            # old table detected: rebuild into new schema
+            await db.execute("PRAGMA foreign_keys=OFF")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS notifications_sent_new(
+                    person_id   INTEGER NOT NULL,
+                    follower_id INTEGER NOT NULL,
+                    date_ymd    TEXT    NOT NULL,
+                    PRIMARY KEY(person_id, follower_id, date_ymd)
+                )
+            """)
+
+            # figure out what columns old table had
+            # typical legacy: id (pk), person_id, date_ymd, UNIQUE(person_id, date_ymd)
+            # migrate old rows with follower_id=0 (best-effort)
+            # if follower_id already existed, we wouldn't be here.
+            try:
+                await db.execute("""
+                    INSERT OR IGNORE INTO notifications_sent_new(person_id, follower_id, date_ymd)
+                    SELECT person_id, 0 AS follower_id, date_ymd
+                    FROM notifications_sent
+                """)
+            except Exception:
+                # if even that fails, just continue with empty new table
+                pass
+
+            await db.execute("DROP TABLE notifications_sent")
+            await db.execute("ALTER TABLE notifications_sent_new RENAME TO notifications_sent")
+            await db.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_notif_triplet
+                ON notifications_sent(person_id, follower_id, date_ymd)
+            """)
+            await db.execute("PRAGMA foreign_keys=ON")
+            await db.commit()
+
+    async def _already_sent(self, *, person_id: int, follower_id: int, date_ymd: str) -> bool:
+        await self._ensure_sent_schema()
+        async with aiosqlite.connect(self._db_path) as db:
+            cur = await db.execute(
+                "SELECT 1 FROM notifications_sent WHERE person_id=? AND follower_id=? AND date_ymd=?",
+                (person_id, follower_id, date_ymd),
+            )
+            return (await cur.fetchone()) is not None
+
+    async def _mark_sent_once(self, *, person_id: int, follower_id: int, date_ymd: str) -> bool:
+        # try to mark sent; true = we won the race and should send; false = someone already did
+        await self._ensure_sent_schema()
+        async with aiosqlite.connect(self._db_path) as db:
+            try:
+                await db.execute(
+                    "INSERT OR IGNORE INTO notifications_sent(person_id, follower_id, date_ymd) VALUES(?,?,?)",
+                    (person_id, follower_id, date_ymd),
+                )
+                await db.commit()
+            except Exception:
+                return False
+            # check if row exists (either we inserted it now, or it was there before)
+            cur = await db.execute(
+                "SELECT 1 FROM notifications_sent WHERE person_id=? AND follower_id=? AND date_ymd=?",
+                (person_id, follower_id, date_ymd),
+            )
+            return (await cur.fetchone()) is not None
+
+    # ---------------- public api ----------------
 
     async def schedule_all(self, horizon_days: int = 7) -> None:
-        # pre-schedule all upcoming birthday notifications inside horizon
         self._last_horizon = horizon_days
         jq = getattr(self.app, "job_queue", None)
         if not jq:
@@ -101,7 +195,7 @@ class NotifService:
             if not u.birth_day or not u.birth_month:
                 continue
 
-            # person local midnight
+            # person local midnight for the birthday date
             person_tz = _tz_from_offset(u.tz)
             next_date = _next_birthday_date(u.birth_day, u.birth_month, u.birth_year, today_utc)
             if not next_date:
@@ -115,7 +209,6 @@ class NotifService:
             # followers union
             followers = await self._followers_union(u.user_id, (u.username or "").lower() if u.username else None)
 
-            # per follower compute trigger
             for fid in followers:
                 if fid == u.user_id:
                     continue
@@ -129,20 +222,22 @@ class NotifService:
                 trigger_local = bday_in_f_tz - dt.timedelta(hours=alert_h)
                 trigger_utc = trigger_local.astimezone(dt.timezone.utc)
 
-                # catch-up if already passed within 12h window
+                # catch-up: if within last 12h
                 if trigger_utc <= now_utc and (now_utc - trigger_utc) <= dt.timedelta(hours=12):
-                    await self._fire_direct(
-                        follower_id=fid,
-                        person_id=u.user_id,
-                        person_username=u.username,
-                        person_birth=(u.birth_day, u.birth_month, u.birth_year),
-                        alert_hours=alert_h,
-                    )
-                    cnt_catchup += 1
+                    date_ymd = bday_local.date().isoformat()
+                    if not await self._already_sent(person_id=u.user_id, follower_id=fid, date_ymd=date_ymd):
+                        await self._fire_direct(
+                            follower_id=fid,
+                            person_id=u.user_id,
+                            person_username=u.username,
+                            person_birth=(u.birth_day, u.birth_month, u.birth_year),
+                            alert_hours=alert_h,
+                            bday_local=bday_local,
+                        )
+                        cnt_catchup += 1
                     continue
 
                 if trigger_utc <= now_utc:
-                    # too old, skip silently
                     continue
 
                 name = _job_name(u.user_id, fid, trigger_utc)
@@ -181,7 +276,6 @@ class NotifService:
             except Exception:
                 pass
 
-        # use tz string if valid, otherwise utc
         try:
             from zoneinfo import ZoneInfo
             tz = ZoneInfo(getattr(config, "DEFAULT_TZ", "UTC"))
@@ -215,26 +309,21 @@ class NotifService:
                 self.log.exception("test send failed to %s: %s", fid, e)
         return sent
 
-    # reschedule surface
+    # ---------------- reschedule surface ----------------
 
     async def reschedule_for_person(self, person_id: int, username: Optional[str] = None) -> None:
-        # cancel any jobs for this person and rebuild for current followers
         jq = getattr(self.app, "job_queue", None)
         if not jq:
             return
-        uname_l = (username or "").lower() if username else None
-        # cancel old
         for j in self._iter_jobs():
             if j.name and j.name.startswith(f"bday:{person_id}:"):
                 try:
                     j.schedule_removal()
                 except Exception:
                     pass
-        # then schedule anew (inside horizon and catch-up included)
         await self.schedule_all(self._last_horizon)
 
     async def reschedule_for_follower(self, follower_id: int) -> None:
-        # cancel all jobs targeted at follower and rebuild
         jq = getattr(self.app, "job_queue", None)
         if not jq:
             return
@@ -249,7 +338,7 @@ class NotifService:
                     pass
         await self.schedule_all(self._last_horizon)
 
-    # ---------- internals ----------
+    # ---------------- internals ----------------
 
     def _iter_jobs(self):
         jq = getattr(self.app, "job_queue", None)
@@ -258,7 +347,6 @@ class NotifService:
         try:
             return list(jq.jobs())
         except Exception:
-            # fallback for older ptb if api differs
             try:
                 return list(getattr(jq, "scheduler").queue)  # type: ignore[attr-defined]
             except Exception:
@@ -278,8 +366,30 @@ class NotifService:
         person_username: Optional[str],
         person_birth: Tuple[Optional[int], Optional[int], Optional[int]],
         alert_hours: int,
+        bday_local: Optional[dt.datetime] = None,
     ) -> None:
-        # immediate send used for catch-up
+        # figure out date key (person's local birthday date)
+        try:
+            if bday_local is None:
+                pprof = await self.users.get_user(person_id)
+                tz = _tz_from_offset(_as_int((pprof or {}).get("tz"), 0))
+                today_utc = dt.datetime.now(dt.timezone.utc).date()
+                d, m, y = person_birth
+                if not d or not m:
+                    return
+                next_date = _next_birthday_date(int(d), int(m), int(y) if y else None, today_utc)
+                if not next_date:
+                    return
+                bday_local = dt.datetime.combine(next_date, dt.time(0, 0, tzinfo=tz))
+            date_ymd = bday_local.date().isoformat()
+        except Exception:
+            return
+
+        # idempotent guard
+        ok_to_send = await self._mark_sent_once(person_id=person_id, follower_id=follower_id, date_ymd=date_ymd)
+        if not ok_to_send:
+            return
+
         fprof = await self.users.get_user(follower_id)
         if not fprof:
             return
@@ -288,23 +398,22 @@ class NotifService:
             return
 
         pprof = await self.users.get_user(person_id)
-        uname = (pprof.get("username") if pprof else person_username) or f"id:{person_id}"
+        uname = (pprof.get("username") if pprof else person_username)
+        disp = f"@{uname}" if uname else f"id:{person_id}"
 
         d, m, y = person_birth
         age_part = ""
         try:
             if y and d and m:
-                today = dt.date.today()
-                nxt = _next_birthday_date(int(d), int(m), int(y), today)
-                if nxt:
-                    age_part = f" (исполнится {nxt.year - int(y)})"
+                nxt = bday_local.date()
+                age_part = f" (исполнится {nxt.year - int(y)})"
         except Exception:
             age_part = ""
 
         if _as_int(alert_hours, 0) == 0:
-            msg = f"🎂 сегодня день рождения у @{uname}{age_part}! 🎉"
+            msg = f"🎂 сегодня день рождения у {disp}{age_part}! 🎉"
         else:
-            msg = f"🎂 у @{uname}{age_part} день рождения через {int(alert_hours)} ч.! 🎉"
+            msg = f"🎂 у {disp}{age_part} день рождения через {int(alert_hours)} ч.! 🎉"
 
         try:
             await self.app.bot.send_message(chat_id=chat_id, text=msg)
@@ -317,6 +426,23 @@ class NotifService:
         follower_id = data.get("follower_id")
         alert_h = _as_int(data.get("alert_hours"), 0)
 
+        # date key from job data (person's local midnight)
+        try:
+            bday_local_iso = data.get("bday_at_local")
+            bday_local = dt.datetime.fromisoformat(bday_local_iso) if bday_local_iso else None
+            date_ymd = bday_local.date().isoformat() if bday_local else None
+        except Exception:
+            bday_local = None
+            date_ymd = None
+
+        if person_id is None or follower_id is None or date_ymd is None:
+            return
+
+        # idempotent guard
+        ok_to_send = await self._mark_sent_once(person_id=person_id, follower_id=follower_id, date_ymd=date_ymd)
+        if not ok_to_send:
+            return
+
         fprof = await self.users.get_user(follower_id)
         if not fprof:
             return
@@ -325,23 +451,22 @@ class NotifService:
             return
 
         pprof = await self.users.get_user(person_id)
-        uname = (pprof.get("username") if pprof else data.get("person_username")) or f"id:{person_id}"
+        uname = (pprof.get("username") if pprof else data.get("person_username"))
+        disp = f"@{uname}" if uname else f"id:{person_id}"
 
         d, m, y = (data.get("person_birth") or (None, None, None))
         age_part = ""
         try:
-            if y and d and m:
-                today = dt.date.today()
-                nxt = _next_birthday_date(int(d), int(m), int(y), today)
-                if nxt:
-                    age_part = f" (исполнится {nxt.year - int(y)})"
+            if y and d and m and bday_local is not None:
+                nxt = bday_local.date()
+                age_part = f" (исполнится {nxt.year - int(y)})"
         except Exception:
             age_part = ""
 
         if alert_h == 0:
-            msg = f"🎂 сегодня день рождения у @{uname}{age_part}! 🎉"
+            msg = f"🎂 сегодня день рождения у {disp}{age_part}! 🎉"
         else:
-            msg = f"🎂 у @{uname}{age_part} день рождения через {alert_h} ч.! 🎉"
+            msg = f"🎂 у {disp}{age_part} день рождения через {alert_h} ч.! 🎉"
 
         try:
             await self.app.bot.send_message(chat_id=chat_id, text=msg)
@@ -349,7 +474,6 @@ class NotifService:
             self.log.exception("send failed: %s", e)
 
     async def _followers_co_members(self, user_id: int) -> List[int]:
-        # co-members across all groups where user participates
         ids: List[int] = []
         try:
             rows = await self.groups.list_user_groups(user_id)
@@ -364,7 +488,6 @@ class NotifService:
         return [i for i in ids if i and i != user_id]
 
     async def _followers_via_friends(self, person_id: int, username_lower: Optional[str]) -> List[int]:
-        # delegate to friends repo to avoid direct db usage
         try:
             owners = await self.friends.list_owners_for_person(
                 person_user_id=person_id,

@@ -84,7 +84,8 @@ class StartHandler:
         uid = update.effective_user.id
 
         try:
-            await self.users.set_birthday(uid, d, m, y)
+            # FIX: use existing repo method
+            await self.users.update_bday(uid, d, m, y)
         except Exception as e:
             log.exception("failed to set birthday: %s", e)
             await update.message.reply_text("не удалось сохранить дату. попробуйте ещё раз.")
