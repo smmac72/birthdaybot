@@ -1,4 +1,4 @@
-name: Deploy bots
+name: Deploy PROD/STAGE
 
 on:
   push:
