@@ -23,7 +23,7 @@ from .db.repo_groups import GroupsRepo
 from .db.repo_friends import FriendsRepo
 
 # handlers
-from .handlers.start import StartHandler, AWAITING_LANGUAGE, AWAITING_REGISTRATION_BDAY
+from .handlers.start import StartHandler, AWAITING_LANG_PICK, AWAITING_REGISTRATION_BDAY
 from .handlers.groups import GroupsHandler
 from .handlers.friends import FriendsHandler
 from .handlers.settings import SettingsHandler, S_WAIT_BDAY, S_WAIT_TZ, S_WAIT_ALERT, S_WAIT_LANG
@@ -236,8 +236,8 @@ def build_application() -> Application:
         ConversationHandler(
             entry_points=[CommandHandler("start", start_handler.start)],
             states={
-                AWAITING_LANGUAGE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.language_chosen)
+                AWAITING_LANG_PICK: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.lang_pick_entered)
                 ],
                 AWAITING_REGISTRATION_BDAY: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.reg_bday_entered)

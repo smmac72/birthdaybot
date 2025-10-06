@@ -136,3 +136,16 @@ notif_today: "🎂 сегодня день рождения у @{username}{age_p
 notif_in_hours: "🎂 у @{username}{age_part} день рождения через {hours} ч.! 🎉"
 turns_age: "исполнится {age}"
 test_alert: "тестовое уведомление: у участника будет др через {hours} ч."
+
+# general new/used
+when_today: "сегодня"
+when_unknown: "дата не указана"
+when_in_days: "через {n} дн."
+
+# settings messages
+settings_bday_ok_dropped_year: "дата обновлена (год отброшен как некорректный): {bday}"
+
+# groups helper labels
+groups_code: "код: {code}"
+groups_members_word: "участников"
+groups_one_title: "группа:"

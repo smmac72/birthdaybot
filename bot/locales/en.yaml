@@ -136,3 +136,16 @@ notif_today: "🎂 it’s @{username}{age_part}’s birthday today! 🎉"
 notif_in_hours: "🎂 @{username}{age_part} has a birthday in {hours} h! 🎉"
 turns_age: "turns {age}"
 test_alert: "test alert: birthday in {hours} h."
+
+# general new/used
+when_today: "today"
+when_unknown: "date not set"
+when_in_days: "in {n} d."
+
+# settings messages
+settings_bday_ok_dropped_year: "date set (incorrect year discarded): {bday}"
+
+# groups helper labels
+groups_code: "code: {code}"
+groups_members_word: "members"
+groups_one_title: "group:"

@@ -1,195 +1,148 @@
 from __future__ import annotations
 
 import os
-import glob
-import logging
-from typing import Any, Dict, Optional
+import re
+import yaml
+from typing import Dict, Any, Optional, Iterable
 
-try:
-    import yaml  # pyyaml
-except ImportError:
-    yaml = None  # type: ignore
+_LOCALES: Dict[str, Dict[str, str]] = {}
+_LOCALES_DIR = os.path.join(os.path.dirname(__file__), "locales")  # expects en.yaml, ru.yaml, etc.
 
-log = logging.getLogger("i18n")
 
-# locales live here: bot/locales/{code}.yaml
-_LOCALES_DIR = os.path.join(os.path.dirname(__file__), "locales")
+# safe dict for format_map — leaves {missing} as-is instead of blowing up
+class _SafeDict(dict):
+    def __missing__(self, key):
+        return "{" + key + "}"
 
-# cache: {lang_code: {key: value}}
-_CACHE: Dict[str, Dict[str, Any]] = {}
 
-# defaults
-_DEFAULT_LANG = "ru"
-_FALLBACK_LANG = "en"
-
-# native labels (used if yaml has no lang_label)
-_LANG_LABELS = {
-    "ru": "Русский",
-    "en": "English",
-}
-
-# flags for pretty language buttons
-_LANG_FLAGS = {
-    "ru": "🇷🇺",
-    "en": "🇬🇧",
-}
-
-# ---------- loading ----------
-
-def _load_lang(code: str) -> Dict[str, Any]:
-    code = (code or "").lower()
-    if code in _CACHE:
-        return _CACHE[code]
-
-    path = os.path.join(_LOCALES_DIR, f"{code}.yaml")
-    data: Dict[str, Any] = {}
-
-    if yaml and os.path.exists(path):
+def _load_locales() -> None:
+    if _LOCALES:
+        return
+    if not os.path.isdir(_LOCALES_DIR):
+        return
+    for fname in os.listdir(_LOCALES_DIR):
+        if not fname.endswith(".yaml"):
+            continue
+        code = os.path.splitext(fname)[0].lower()
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                loaded = yaml.safe_load(f) or {}
-                if isinstance(loaded, dict):
-                    data = loaded
-        except Exception as e:
-            log.exception("failed to load locale %s: %s", code, e)
+            with open(os.path.join(_LOCALES_DIR, fname), "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+                # flatten only str values, keep others out
+                _LOCALES[code] = {str(k): str(v) for k, v in (data.items() if isinstance(data, dict) else [])}
+        except Exception:
+            # ignore broken locale to avoid startup crash
+            pass
 
-    _CACHE[code] = data
-    return data
 
 def available_languages() -> list[str]:
-    codes = []
-    try:
-        for p in glob.glob(os.path.join(_LOCALES_DIR, "*.yaml")):
-            base = os.path.basename(p)
-            c = base[:-5] if base.endswith(".yaml") else base
-            if c:
-                codes.append(c.lower())
-    except Exception as e:
-        log.exception("glob locales failed: %s", e)
+    _load_locales()
+    # stable order: english first if present, then ru, then others
+    pref = ["en", "ru"]
+    rest = [c for c in _LOCALES.keys() if c not in pref]
+    return [c for c in pref if c in _LOCALES] + sorted(rest)
 
-    codes = sorted(set(codes))
-    if codes:
-        ordered = []
-        for head in ("ru", "en"):
-            if head in codes:
-                ordered.append(head)
-        for c in codes:
-            if c not in ordered:
-                ordered.append(c)
-        return ordered
 
-    fallback = [c for c in ("ru", "en") if c in _LANG_LABELS]
-    return fallback or ["ru"]
-
-# ---------- language resolution ----------
-
-def _norm_lang(code: Optional[str]) -> str:
-    if not code:
-        return _DEFAULT_LANG
-    c = code.lower()
-    if "-" in c:
-        c = c.split("-", 1)[0]
-    langs = set(available_languages())
-    if c in langs:
-        return c
-    if _FALLBACK_LANG in langs:
-        return _FALLBACK_LANG
-    return _DEFAULT_LANG
-
-def current_lang(*, update=None, context=None, explicit: Optional[str] = None) -> str:
-    if explicit:
-        return _norm_lang(explicit)
-
+def current_lang(*, update=None, context=None, default: str = "en") -> str:
+    # context wins
     if context is not None:
-        u = getattr(context, "user_data", None)
-        if isinstance(u, dict) and u.get("lang"):
-            return _norm_lang(u["lang"])
-        c = getattr(context, "chat_data", None)
-        if isinstance(c, dict) and c.get("lang"):
-            return _norm_lang(c["lang"])
+        code = (context.user_data or {}).get("lang")
+        if isinstance(code, str) and code in _LOCALES:
+            return code
+    # naive fallback by telegram locale if you ever pass it
+    if update is not None:
+        try:
+            user_lang = (getattr(update.effective_user, "language_code", None) or "").split("-")[0].lower()
+            if user_lang in _LOCALES:
+                return user_lang
+        except Exception:
+            pass
+    # default
+    return default if default in _LOCALES else (available_languages()[0] if available_languages() else "en")
 
+
+def set_lang(code: str, *, context=None) -> None:
+    if context is None:
+        return
+    _load_locales()
+    if code in _LOCALES:
+        context.user_data["lang"] = code
+
+
+def t(key: str, *, update=None, context=None, **params) -> str:
+    """translate key and safely format placeholders with params"""
+    _load_locales()
+    lang = current_lang(update=update, context=context)
+    # try selected lang, then english, then raw key
+    raw = (
+        (_LOCALES.get(lang) or {}).get(key)
+        or (_LOCALES.get("en") or {}).get(key)
+        or key
+    )
     try:
-        if update and getattr(update, "effective_user", None):
-            lc = (update.effective_user.language_code or "").strip()
-            if lc:
-                return _norm_lang(lc)
+        return raw.format_map(_SafeDict(params))
     except Exception:
-        pass
+        # if formatting borks, just return raw to avoid user-visible crash
+        return raw
 
-    return _DEFAULT_LANG
 
-def set_lang(code: str, *, context=None) -> str:
-    lang = _norm_lang(code)
-    if context is not None:
-        if hasattr(context, "user_data") and isinstance(context.user_data, dict):
-            context.user_data["lang"] = lang
-        if hasattr(context, "chat_data") and isinstance(context.chat_data, dict):
-            context.chat_data["lang"] = lang
-    return lang
+# buttons helpers
 
-def language_label(code: Optional[str], *, update=None, context=None) -> str:
-    c = _norm_lang(code or current_lang(update=update, context=context))
-    data = _load_lang(c)
-    label = data.get("lang_label")
-    if isinstance(label, str) and label.strip():
-        return label.strip()
-    return _LANG_LABELS.get(c, c)
+# language labels (with emoji) — overridable via locale keys if present
+_DEFAULT_LANG_LABELS = {
+    "en": "English 🇬🇧",
+    "ru": "Русский 🇷🇺",
+}
 
-def language_flag(code: Optional[str]) -> str:
-    c = _norm_lang(code)
-    return _LANG_FLAGS.get(c, "")
+def language_label(code: str) -> str:
+    _load_locales()
+    # allow per-locale override: lang_label_<code> in that code or in en
+    key = f"lang_label_{code}"
+    for src in (code, "en"):
+        val = (_LOCALES.get(src) or {}).get(key)
+        if val:
+            return val
+    return _DEFAULT_LANG_LABELS.get(code, code)
+
 
 def language_button_text(code: str) -> str:
-    # flag + native label for picker buttons
-    return f"{language_flag(code)} {language_label(code)}".strip()
+    # single source for the keyboard caption
+    return language_label(code)
+
 
 def parse_language_choice(text: str) -> Optional[str]:
-    # accept either "English", "Русский" or "🇬🇧 English" etc.
-    s = (text or "").strip().lower()
-    if not s:
+    """map pressed caption back to language code"""
+    if not text:
         return None
-    for c in available_languages():
-        lbl = language_label(c).lower()
-        flg = language_flag(c)
-        if s == lbl or s == f"{flg} {lbl}".lower() or s == flg.lower():
-            return c
+    normalized = text.strip().casefold()
+    for code in available_languages():
+        lbl = language_button_text(code).strip().casefold()
+        if normalized == lbl:
+            return code
+        # be lenient: some keyboards drop emoji — compare alnum subset
+        def _only_alnum(s: str) -> str:
+            return "".join(ch for ch in s if ch.isalnum() or ch.isspace())
+        if _only_alnum(normalized) == _only_alnum(lbl):
+            return code
     return None
 
-# ---------- translation ----------
 
-def t(key: str, *, update=None, context=None, lang: Optional[str] = None, **params) -> str:
-    code = _norm_lang(lang or current_lang(update=update, context=context))
-    val = _load_lang(code).get(key)
+def _escape_regex(s: str) -> str:
+    return re.escape(s)
 
-    if val is None and _FALLBACK_LANG and _FALLBACK_LANG != code:
-        val = _load_lang(_FALLBACK_LANG).get(key)
-    if val is None and _DEFAULT_LANG not in (code, _FALLBACK_LANG):
-        val = _load_lang(_DEFAULT_LANG).get(key)
-    if val is None:
-        val = key
-
-    if isinstance(val, str):
-        try:
-            return val.format(**params)
-        except Exception:
-            return val
-    try:
-        return str(val)
-    except Exception:
-        return key
-
-# ---------- helpers for button regex ----------
 
 def btn_regex(key: str) -> str:
     """
-    build a regex that matches this button text in all languages
+    build a ^(?:opt1|opt2|...|optN)$ regex that matches this button across all locales.
+    usage: MessageHandler(filters.Regex(btn_regex("btn_settings_lang")), handler)
     """
-    import re
-    variants = []
-    for code in available_languages():
-        v = _load_lang(code).get(key)
-        if isinstance(v, str) and v.strip():
-            variants.append(re.escape(v.strip()))
-    if not variants:
-        variants.append(re.escape(key))
-    return "^(" + "|".join(variants) + ")$"
+    _load_locales()
+    texts: list[str] = []
+    for code, mp in _LOCALES.items():
+        val = mp.get(key)
+        if isinstance(val, str) and val:
+            texts.append(_escape_regex(val))
+    # if key is missing somewhere, fall back to raw key to avoid dead buttons
+    if not texts:
+        texts = [_escape_regex(key)]
+    pattern = "^(?:" + "|".join(sorted(set(texts), key=lambda x: x.lower())) + ")$"
+    return pattern
