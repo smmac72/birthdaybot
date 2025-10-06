@@ -16,7 +16,8 @@ from telegram.ext import (
     PreCheckoutQueryHandler,
     ContextTypes,
     filters,
-    ApplicationHandlerStop,   # <<< IMPORTANT: stop further handlers properly
+    ApplicationHandlerStop,
+    Defaults
 )
 from telegram.constants import ParseMode
 
@@ -217,8 +218,8 @@ def build_application() -> Application:
     log = logging.getLogger("birthdaybot")
 
     users_repo, groups_repo, friends_repo = _build_repos()
-
-    app = ApplicationBuilder().token(config.BOT_TOKEN).parse_mode(ParseMode.HTML).build()
+    defaults = Defaults(parse_mode=ParseMode.HTML)
+    app = ApplicationBuilder().token(config.BOT_TOKEN).defaults(defaults).build()
 
     app.bot_data["users_repo"] = users_repo
     app.bot_data["groups_repo"] = groups_repo
