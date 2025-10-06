@@ -1,0 +1,138 @@
+# english strings
+lang_label: "English"
+
+# titles / headers
+main_menu_title: "main menu:"
+
+# generic
+btn_cancel: "◀️ cancel"
+btn_back: "⬅️ back"
+btn_back_main: "◀️ back to main menu"
+choose_action: "choose an action:"
+not_found: "not found."
+canceled: "canceled."
+when_today: "today"
+when_unknown: "date not set"
+when_in_days: "in {n} d."
+
+# badges / labels
+badge_friend: "FRIEND"
+badge_in_group: "IN GROUP"
+groups_label: " (in groups: {names})"
+
+# main menu buttons
+btn_birthdays: "🎂 birthdays"
+btn_groups: "👪 groups"
+btn_friends: "👥 friends management"
+btn_settings: "⚙️ settings"
+btn_about: "ℹ️ about"
+
+# groups menu buttons
+btn_group_create: "➕ create group"
+btn_group_join: "🔑 join group"
+btn_group_leave: "🚪 leave group"
+btn_groups_manage: "📝 manage groups"
+
+# groups mgmt buttons
+btn_group_rename: "✏️ rename group"
+btn_group_member_add: "➕ add member"
+btn_group_member_del: "🗑 remove member"
+
+# friends menu buttons
+btn_friend_add: "➕ add friend"
+btn_friend_del: "➖ remove friend"
+
+# settings buttons
+btn_settings_bday: "birthday date"
+btn_settings_tz: "timezone"
+btn_settings_alert: "alert offset"
+btn_settings_lang: "language"
+
+# start
+start_back: "welcome back!"
+start_bday_prompt: "enter your birthday as DD-MM-YYYY or DD-MM (e.g., 15-05-1990 or 15-05):\n\npress “◀️ cancel” to exit."
+start_bday_bad: "that didn’t work. examples: 07-02 or 07-02-2002"
+start_bday_saved: "ok, saved: {d}-{m}{y}."
+need_start: "please press /start first"
+
+# settings
+settings_header: "your settings:\n"
+settings_bday: "birthday: {bday}"
+settings_tz: "timezone: {tz}"
+settings_alert: "alert offset: {h} h before the birthday midnight"
+settings_followers: "followers: friends — {f_friends} | groups — {f_groups}"
+settings_bday_prompt: "enter the date as DD-MM or DD-MM-YYYY"
+settings_bday_bad: "that didn’t work. example: 29-02 or 07-02-2002"
+settings_bday_ok: "birthday updated."
+settings_bday_fail: "failed to update birthday."
+settings_tz_prompt: "enter GMT offset, e.g.: 3, 0, -5"
+settings_tz_bad: "please enter an integer between -12 and 14"
+settings_tz_ok: "timezone updated."
+settings_tz_fail: "failed to update timezone."
+settings_alert_prompt: "how many hours in advance? enter a number (0..48)"
+settings_alert_bad: "enter an integer between 0 and 48"
+settings_alert_ok: "alert offset updated."
+settings_alert_fail: "failed to update alert offset."
+settings_lang_pick: "choose language (current: {lang})"
+settings_lang_set_ok: "language switched to {lang}."
+settings_lang_bad: "couldn’t parse the choice. press a button below."
+
+# friends
+friends_header: "friends:\n"
+friends_empty: "you have no friends yet.\nadd a friend — and we’ll start reminding you about their birthday."
+friends_add_prompt: "enter @username or id. you can do it in one line: @username DD-MM(-YYYY)."
+friends_add_ok: "friend added."
+friends_add_date_prompt: "this user is not found in the bot. provide a birthday (DD-MM-YYYY or DD-MM):"
+friends_add_date_bad: "bad format. example: 11-11 or 11-11-1999"
+friends_del_prompt: "enter @username or id to remove:"
+friends_del_ok: "friend removed."
+friends_del_fail: "couldn’t find such friend."
+
+# groups (texts)
+groups_none: "you have no groups."
+groups_list_header: "your groups:"
+groups_members_header: "members ({n}):"
+groups_creator_mark: " 👑 you are the owner"
+groups_manage_need: "you have no groups to manage."
+groups_manage_pick: "pick a group to manage:"
+groups_manage_prompt: "pick an action:"
+groups_pick_from_menu: "please pick a group from the menu."
+groups_not_found: "group not found."
+
+groups_create_prompt: "enter a new group name:"
+groups_created: "group “{name}” created.\ninvite code: {code}"
+
+groups_join_prompt: "enter a group code:"
+groups_join_ok: "you joined the group “{name}”."
+groups_join_fail: "invalid code, or you are already in this group."
+
+groups_leave_prompt: "enter the group code to leave:"
+groups_leave_ok: "you left the group “{name}”."
+groups_leave_fail: "invalid group code, or you are not a member."
+
+groups_rename_prompt: "enter a new group name:"
+groups_rename_ok: "group name updated."
+
+groups_add_member_prompt: "enter @username or id. you may add a date: @user DD-MM(-YYYY).\nif the user is not in the bot, date is required."
+groups_add_member_ok: "member added."
+groups_add_member_need_date: "this user is not in the bot. please provide a date as DD-MM(-YYYY)."
+
+groups_del_member_prompt: "enter @username or id of the member to remove:"
+groups_del_member_self: "you can’t remove yourself. use “🚪 leave group”."
+groups_del_member_ok: "member removed."
+groups_del_member_fail: "failed to remove the member."
+
+# birthdays
+birthdays_empty: "no contacts yet. add friends or join groups."
+birthdays_header: "upcoming birthdays:\n"
+
+# about
+about_text: "we’re open source.\ngithub: https://github.com/smmac72/birthdaybot\nissues: https://github.com/smmac72/birthdaybot/issues\n\nthis bot reminds you about birthdays: friends, groups, timezones and early alerts."
+donate_title: "support the project ({stars}⭐)"
+donate_desc: "donation for birthdaybot development"
+donate_thanks: "thanks for the support! received {amount}⭐"
+
+notif_today: "🎂 it’s @{username}{age_part}’s birthday today! 🎉"
+notif_in_hours: "🎂 @{username}{age_part} has a birthday in {hours} h! 🎉"
+turns_age: "turns {age}"
+test_alert: "test alert: birthday in {hours} h."

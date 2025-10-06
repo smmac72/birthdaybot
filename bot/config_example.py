@@ -7,3 +7,7 @@ DB_PATH = os.getenv("DB_PATH", "birthday_bot.db")
 SCHEDULE_HORIZON_DAYS = 370
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+DEFAULT_LANG = os.getenv("DEFAULT_LANG", "ru")
+
+LOCALE_PATH = os.getenv("LOCALE_PATH", "locale")

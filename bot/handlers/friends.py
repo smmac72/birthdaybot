@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import logging
 import re
 import uuid
@@ -11,6 +12,7 @@ from ..db.repo_friends import FriendsRepo
 from ..db.repo_users import UsersRepo
 from ..db.repo_groups import GroupsRepo
 from ..keyboards import friends_menu_kb
+from ..i18n import t
 
 # states
 STATE_WAIT_ADD = 0
@@ -20,30 +22,21 @@ STATE_WAIT_DELETE = 2
 def _log_id() -> str:
     return uuid.uuid4().hex[:8]
 
-def _cancel_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup([["◀️ отмена"]], resize_keyboard=True, one_time_keyboard=True)
+def _cancel_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([[t("btn_cancel", update=update, context=context)]], resize_keyboard=True, one_time_keyboard=True)
 
 def _icon_registered(user_id: Optional[int]) -> str:
     return "✅" if user_id else "⚪️"
 
-def _fmt_bday(d: Optional[int], m: Optional[int], y: Optional[int]) -> str:
+def _fmt_bday(d: Optional[int], m: Optional[int], y: Optional[int], *, update=None, context=None) -> str:
     if d and m:
         return f"{int(d):02d}-{int(m):02d}" + (f"-{int(y)}" if y else "")
-    return "не указан"
-
-def _valid_date(d: int, m: int, y: Optional[int]) -> bool:
-    import datetime as dt
-    try:
-        if y is None:
-            y = 2000
-        dt.date(int(y), int(m), int(d))
-        return True
-    except Exception:
-        return False
+    return t("when_unknown", update=update, context=context)
 
 def _parse_bday(text: str):
-    t = (text or "").strip()
-    m = re.search(r"\b(\d{2})-(\d{2})(?:-(\d{4}))?\b", t)
+    # dd-mm or dd-mm-yyyy, soft guard
+    ttxt = (text or "").strip()
+    m = re.search(r"\b(\d{2})-(\d{2})(?:-(\d{4}))?\b", ttxt)
     if not m:
         return None
     d = int(m.group(1)); mo = int(m.group(2))
@@ -51,8 +44,6 @@ def _parse_bday(text: str):
     if not (1 <= d <= 31 and 1 <= mo <= 12):
         return None
     if y is not None and (y < 1900 or y > 2100):
-        return None
-    if not _valid_date(d, mo, y):
         return None
     return d, mo, y
 
@@ -69,12 +60,12 @@ def _days_until_key(d: Optional[int], m: Optional[int]) -> int:
         target = target.replace(year=today.year + 1)
     return (target - today).days
 
-def _when_str(days: int) -> str:
+def _when_str(days: int, *, update=None, context=None) -> str:
     if days == 0:
-        return "сегодня"
+        return t("when_today", update=update, context=context)
     if days >= 10**8:
-        return "дата не указана"
-    return f"через {days} дн."
+        return t("when_unknown", update=update, context=context)
+    return t("when_in_days", update=update, context=context, n=days)
 
 class FriendsHandler:
     def __init__(self, users: UsersRepo, friends: FriendsRepo, groups: GroupsRepo):
@@ -83,6 +74,7 @@ class FriendsHandler:
         self.groups = groups
         self.log = logging.getLogger("friends")
 
+    # menu entry shows the list immediately
     async def menu_entry(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         rid = _log_id()
         uid = update.effective_user.id
@@ -93,39 +85,34 @@ class FriendsHandler:
             rows = [dict(r) for r in rows]
         except Exception as e:
             self.log.exception("[%s] list_friends failed: %s", rid, e)
-            await update.message.reply_text("не удалось получить список друзей.", reply_markup=friends_menu_kb())
+            await update.message.reply_text(t("not_found", update=update, context=context), reply_markup=friends_menu_kb(update=update, context=context))
             return
 
         rows.sort(key=lambda r: _days_until_key(r.get("birth_day"), r.get("birth_month")))
 
-        lines = ["друзья:\n"] if rows else [
-            "у вас пока нет друзей.\nдобавьте друга — и мы начнём напоминать о его дне рождения."
-        ]
-        for r in rows:
-            icon = _icon_registered(r.get("friend_user_id"))
-            name = f"@{r['friend_username']}" if r.get("friend_username") else (
-                f"id:{r['friend_user_id']}" if r.get("friend_user_id") else "unknown"
-            )
-            bd = _fmt_bday(r.get("birth_day"), r.get("birth_month"), r.get("birth_year"))
-            dleft = _days_until_key(r.get("birth_day"), r.get("birth_month"))
-            when = _when_str(dleft)
-            lines.append(f"{icon} {name} — {bd} ({when})")
-
-        await update.message.reply_text("\n".join(lines), reply_markup=friends_menu_kb())
+        if rows:
+            lines = [t("friends_header", update=update, context=context)]
+            for r in rows:
+                icon = _icon_registered(r.get("friend_user_id"))
+                name = f"@{r['friend_username']}" if r.get("friend_username") else (f"id:{r['friend_user_id']}" if r.get("friend_user_id") else "unknown")
+                bd = _fmt_bday(r.get("birth_day"), r.get("birth_month"), r.get("birth_year"), update=update, context=context)
+                dleft = _days_until_key(r.get("birth_day"), r.get("birth_month"))
+                when = _when_str(dleft, update=update, context=context)
+                lines.append(f"{icon} {name} — {bd} ({when})")
+            await update.message.reply_text("\n".join(lines), reply_markup=friends_menu_kb(update=update, context=context))
+        else:
+            await update.message.reply_text(t("friends_empty", update=update, context=context), reply_markup=friends_menu_kb(update=update, context=context))
 
     # add friend
     async def add_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(
-            "введите @username или id. можно одной строкой: @username дд-мм(-гггг).",
-            reply_markup=_cancel_kb(),
-        )
+        await update.message.reply_text(t("friends_add_prompt", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
         return STATE_WAIT_ADD
 
     async def add_wait(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = update.effective_user.id
         text = (update.message.text or "").strip()
-        if text == "◀️ отмена":
-            await update.message.reply_text("отменено.", reply_markup=friends_menu_kb())
+        if text == t("btn_cancel", update=update, context=context):
+            await update.message.reply_text(t("canceled", update=update, context=context), reply_markup=friends_menu_kb(update=update, context=context))
             return ConversationHandler.END
 
         parts = text.split()
@@ -155,15 +142,15 @@ class FriendsHandler:
                 friend_user_id=prof.get("user_id"),
                 friend_username=prof.get("username"),
             )
-            # reschedule: target person only (alerts for their followers)
+            # reschedule only for the person we follow (to refresh followers list for everyone)
             notif = context.application.bot_data.get("notif_service")
-            if notif:
+            if notif and prof.get("user_id"):
                 try:
-                    await notif.reschedule_for_person(prof.get("user_id"), prof.get("username"))
+                    await notif.reschedule_for_person(int(prof["user_id"]), prof.get("username"))
                 except Exception as e:
                     self.log.exception("add friend reschedule failed: %s", e)
 
-            await update.message.reply_text("друг добавлен.", reply_markup=friends_menu_kb())
+            await update.message.reply_text(t("friends_add_ok", update=update, context=context), reply_markup=friends_menu_kb(update=update, context=context))
             return ConversationHandler.END
 
         if bday:
@@ -174,28 +161,24 @@ class FriendsHandler:
                 friend_username=username,
                 birth_day=d, birth_month=m, birth_year=y,
             )
-            # no reschedule_for_person if user not registered (no id to target)
-            await update.message.reply_text("друг добавлен.", reply_markup=friends_menu_kb())
+            await update.message.reply_text(t("friends_add_ok", update=update, context=context), reply_markup=friends_menu_kb(update=update, context=context))
             return ConversationHandler.END
 
         context.user_data["pending_friend"] = {"user_id": user_id, "username": username}
-        await update.message.reply_text(
-            "этот пользователь не найден в боте. укажите дату рождения (дд-мм-гггг или дд-мм):",
-            reply_markup=_cancel_kb(),
-        )
+        await update.message.reply_text(t("friends_add_date_prompt", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
         return STATE_WAIT_ADD_DATE
 
     async def add_wait_date(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = update.effective_user.id
         text = (update.message.text or "").strip()
-        if text == "◀️ отмена":
+        if text == t("btn_cancel", update=update, context=context):
             context.user_data.pop("pending_friend", None)
-            await update.message.reply_text("отменено.", reply_markup=friends_menu_kb())
+            await update.message.reply_text(t("canceled", update=update, context=context), reply_markup=friends_menu_kb(update=update, context=context))
             return ConversationHandler.END
 
         bday = _parse_bday(text)
         if not bday:
-            await update.message.reply_text("неверный формат. пример: 11-11 или 11-11-1999", reply_markup=_cancel_kb())
+            await update.message.reply_text(t("friends_add_date_bad", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
             return STATE_WAIT_ADD_DATE
 
         pending = context.user_data.get("pending_friend") or {}
@@ -210,19 +193,19 @@ class FriendsHandler:
         )
         context.user_data.pop("pending_friend", None)
 
-        await update.message.reply_text("друг добавлен.", reply_markup=friends_menu_kb())
+        await update.message.reply_text(t("friends_add_ok", update=update, context=context), reply_markup=friends_menu_kb(update=update, context=context))
         return ConversationHandler.END
 
     # delete friend
     async def delete_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("введите @username или id для удаления:", reply_markup=_cancel_kb())
+        await update.message.reply_text(t("friends_del_prompt", update=update, context=context), reply_markup=_cancel_kb(update=update, context=context))
         return STATE_WAIT_DELETE
 
     async def delete_wait(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = update.effective_user.id
         text = (update.message.text or "").strip()
-        if text == "◀️ отмена":
-            await update.message.reply_text("отменено.", reply_markup=friends_menu_kb())
+        if text == t("btn_cancel", update=update, context=context):
+            await update.message.reply_text(t("canceled", update=update, context=context), reply_markup=friends_menu_kb(update=update, context=context))
             return ConversationHandler.END
 
         username = text[1:] if text.startswith("@") else None
@@ -242,33 +225,34 @@ class FriendsHandler:
         except Exception:
             ok = False
 
-        # reschedule for person (if we removed a registered friend)
+        # reschedule: refresh the removed person's schedule (if id known)
         notif = context.application.bot_data.get("notif_service")
         if notif and user_id:
             try:
-                await notif.reschedule_for_person(user_id)
+                await notif.reschedule_for_person(int(user_id))
             except Exception as e:
                 self.log.exception("delete friend reschedule failed: %s", e)
 
-        await update.message.reply_text("друг удалён." if ok else "не удалось найти такого друга.", reply_markup=friends_menu_kb())
+        await update.message.reply_text(t("friends_del_ok", update=update, context=context) if ok else t("friends_del_fail", update=update, context=context), reply_markup=friends_menu_kb(update=update, context=context))
         return ConversationHandler.END
 
+    # conv factories
     def conversation_handlers(self):
         return [
             ConversationHandler(
-                entry_points=[MessageHandler(filters.Regex("^➕ добавить друга$"), self.add_start)],
+                entry_points=[MessageHandler(filters.Regex("^" + re.escape(t("btn_friend_add")) + "$"), self.add_start)],
                 states={
                     STATE_WAIT_ADD: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_wait)],
                     STATE_WAIT_ADD_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_wait_date)],
                 },
-                fallbacks=[MessageHandler(filters.Regex("^◀️ отмена$"), self.menu_entry)],
+                fallbacks=[MessageHandler(filters.Regex("^" + re.escape(t("btn_cancel")) + "$"), self.menu_entry)],
                 name="conv_friends_add",
                 persistent=False,
             ),
             ConversationHandler(
-                entry_points=[MessageHandler(filters.Regex("^➖ удалить друга$"), self.delete_start)],
+                entry_points=[MessageHandler(filters.Regex("^" + re.escape(t("btn_friend_del")) + "$"), self.delete_start)],
                 states={STATE_WAIT_DELETE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.delete_wait)]},
-                fallbacks=[MessageHandler(filters.Regex("^◀️ отмена$"), self.menu_entry)],
+                fallbacks=[MessageHandler(filters.Regex("^" + re.escape(t("btn_cancel")) + "$"), self.menu_entry)],
                 name="conv_friends_delete",
                 persistent=False,
             ),
