@@ -30,7 +30,7 @@ bot/
 
 ```
 ## Contribution
-[CONTRIBUTING.MD](CONTRIBUTING.MD)
+[CONTRIBUTING RULES](CONTRIBUTING.md)
 
 ## Running locally
 1.  **Install dependencies**
