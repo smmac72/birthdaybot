@@ -73,3 +73,14 @@ def about_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
 # single cancel keyboard (used inside convs)
 def cancel_kb(*, context=None) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([[t("btn_cancel", context=context)]], resize_keyboard=True, one_time_keyboard=True)
+
+
+# ----- birthdays nested: wishlist -----
+def birthdays_wishlist_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
+    return _kb(
+        [
+            [t("btn_wishlist_my", update=update, context=context), t("btn_wishlist_edit", update=update, context=context)],
+            [t("btn_wishlist_view", update=update, context=context)],
+            [t("btn_back_main", update=update, context=context)],
+        ]
+    )
