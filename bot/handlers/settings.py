@@ -19,28 +19,38 @@ S_WAIT_ALERT = 2
 
 log = logging.getLogger("settings")
 
+# helpers
 
 def _fmt_bday(d: Optional[int], m: Optional[int], y: Optional[int]) -> str:
     if d and m:
         return f"{int(d):02d}-{int(m):02d}" + (f"-{int(y)}" if y else "")
     return "не указан"
 
+def _valid_date(d: int, m: int, y: Optional[int]) -> bool:
+    import datetime as dt
+    try:
+        if y is None:
+            y = 2000  # leap-safe baseline
+        dt.date(int(y), int(m), int(d))
+        return True
+    except Exception:
+        return False
 
 def _parse_bday(text: str):
-    # accepts dd-mm or dd-mm-yyyy
+    # dd-mm or dd-mm-yyyy
     t = (text or "").strip()
     m = re.search(r"\b(\d{2})-(\d{2})(?:-(\d{4}))?\b", t)
     if not m:
         return None
-    d = int(m.group(1))
-    mo = int(m.group(2))
+    d = int(m.group(1)); mo = int(m.group(2))
     y = int(m.group(3)) if m.group(3) else None
     if not (1 <= d <= 31 and 1 <= mo <= 12):
         return None
     if y is not None and (y < 1900 or y > 2100):
         return None
+    if not _valid_date(d, mo, y):
+        return None
     return d, mo, y
-
 
 def _gmt_label(tz_val) -> str:
     try:
@@ -50,7 +60,6 @@ def _gmt_label(tz_val) -> str:
     sign = "+" if z >= 0 else ""
     return f"gmt{sign}{z}"
 
-
 class SettingsHandler:
     def __init__(self, users: UsersRepo, friends: FriendsRepo, groups: GroupsRepo):
         self.users = users
@@ -58,25 +67,23 @@ class SettingsHandler:
         self.groups = groups
         self.log = logging.getLogger("settings")
 
-    # menu entry
     async def menu_entry(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = update.effective_user.id
         uname_l = (update.effective_user.username or "").lower()
 
-        # load profile
         u = await self.users.get_user(uid)
         if not u:
             await update.message.reply_text("сначала нажмите /start", reply_markup=main_menu_kb())
             return
 
-        # followers via friends
+        # followers via friends repo
         followers_friends = 0
         try:
             followers_friends = await self.friends.count_followers(user_id=uid, username_lower=uname_l or None)
         except Exception as e:
             self.log.exception("followers friends count failed: %s", e)
 
-        # followers via groups (co-members)
+        # followers via groups (unique co-members minus self)
         followers_groups = 0
         try:
             groups = await self.groups.list_user_groups(uid)
@@ -91,22 +98,19 @@ class SettingsHandler:
         except Exception as e:
             self.log.exception("followers groups count failed: %s", e)
 
-        # fields
         bd = _fmt_bday(u.get("birth_day"), u.get("birth_month"), u.get("birth_year"))
         tz_lbl = _gmt_label(u.get("tz", 0))
-        alert = u.get("alert_hours")
         try:
-            alert = int(alert) if alert is not None else 0
+            alert = int(u.get("alert_hours") or 0)
         except Exception:
             alert = 0
 
-        # text
         lines = [
             "ваши настройки:\n",
             f"дата рождения: {bd}",
             f"часовой пояс: {tz_lbl}",
-            f"время уведомлений: за {alert} ч. до полуночи дня рождения",
-            f"за вами следят: друзей — {followers_friends} | в группах — {followers_groups}",
+            f"отложенность уведомлений: за {alert} ч. до полуночи дня рождения",
+            f"за вами следят: друзья — {followers_friends} | группы — {followers_groups}",
             "",
             "выберите действие:",
         ]
@@ -114,7 +118,7 @@ class SettingsHandler:
 
     # change birthday
     async def set_bday_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("введите дату как ДД-ММ или ДД-ММ-ГГГГ")
+        await update.message.reply_text("введите дату как дд-мм или дд-мм-гггг")
         return S_WAIT_BDAY
 
     async def set_bday_wait(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,7 +126,7 @@ class SettingsHandler:
         text = (update.message.text or "").strip()
         b = _parse_bday(text)
         if not b:
-            await update.message.reply_text("неверный формат. пример: 07-02 или 07-02-2002")
+            await update.message.reply_text("не получилось. пример: 29-02 или 07-02-2002")
             return S_WAIT_BDAY
 
         d, m, y = b
@@ -133,7 +137,7 @@ class SettingsHandler:
             self.log.exception("set_bday failed: %s", e)
             await update.message.reply_text("не удалось обновить дату.", reply_markup=settings_menu_kb())
 
-        # reschedule for person
+        # reschedule for person (followers get fresh triggers)
         notif = context.application.bot_data.get("notif_service")
         if notif:
             try:
@@ -166,7 +170,7 @@ class SettingsHandler:
             self.log.exception("set_tz failed: %s", e)
             await update.message.reply_text("не удалось обновить часовой пояс.", reply_markup=settings_menu_kb())
 
-        # reschedule follower
+        # reschedule for follower (own alert window changes)
         notif = context.application.bot_data.get("notif_service")
         if notif:
             try:
@@ -194,12 +198,12 @@ class SettingsHandler:
 
         try:
             await self.users.update_alert_hours(uid, h)
-            await update.message.reply_text("время уведомлений обновлено.", reply_markup=settings_menu_kb())
+            await update.message.reply_text("отложенность уведомлений обновлена.", reply_markup=settings_menu_kb())
         except Exception as e:
             self.log.exception("set_alert failed: %s", e)
-            await update.message.reply_text("не удалось обновить время уведомлений.", reply_markup=settings_menu_kb())
+            await update.message.reply_text("не удалось обновить отложенность.", reply_markup=settings_menu_kb())
 
-        # reschedule follower
+        # reschedule for follower
         notif = context.application.bot_data.get("notif_service")
         if notif:
             try:
@@ -209,11 +213,9 @@ class SettingsHandler:
 
         return ConversationHandler.END
 
-    # stub
     async def change_lang(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("смена языка появится позже.", reply_markup=settings_menu_kb())
 
-    # factory (optional, если регистрируешь явно в main.py — можно не использовать)
     def conversation_handlers(self):
         return [
             ConversationHandler(

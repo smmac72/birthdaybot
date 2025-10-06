@@ -33,6 +33,16 @@ def _fmt_bday(d, m, y) -> str:
         return f"{int(d):02d}-{int(m):02d}" + (f"-{int(y)}" if y else "")
     return "не указан"
 
+def _valid_date(d: int, m: int, y: Optional[int]) -> bool:
+    import datetime as dt
+    try:
+        if y is None:
+            y = 2000
+        dt.date(int(y), int(m), int(d))
+        return True
+    except Exception:
+        return False
+
 def _days_until_key(d: Optional[int], m: Optional[int]) -> int:
     if not d or not m:
         return 10**9
@@ -67,7 +77,6 @@ class GroupsHandler:
         self.users = users
         self.log = logging.getLogger("groups")
 
-    # main groups list
     async def menu_entry(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         rid = _log_id()
         uid = update.effective_user.id
@@ -94,7 +103,6 @@ class GroupsHandler:
 
         await update.message.reply_text("\n\n".join(["\n".join(lines), "выберите действие:"]), reply_markup=groups_menu_kb())
 
-    # managed groups list
     async def manage_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = update.effective_user.id
         try:
@@ -138,12 +146,11 @@ class GroupsHandler:
         gid, code = await self.groups.create_group(name, update.effective_user.id)
         await update.message.reply_text(f"группа '{name}' создана.\nкод приглашения: {code}", reply_markup=groups_menu_kb())
 
-        # reschedule for creator
+        # reschedule for creator (their followers might need it)
         notif = context.application.bot_data.get("notif_service")
         if notif:
             try:
                 await notif.reschedule_for_person(update.effective_user.id, update.effective_user.username)
-                await notif.reschedule_for_follower(update.effective_user.id)
             except Exception as e:
                 self.log.exception("reschedule after create group failed: %s", e)
 
@@ -166,7 +173,6 @@ class GroupsHandler:
             if notif:
                 try:
                     await notif.reschedule_for_person(update.effective_user.id, update.effective_user.username)
-                    await notif.reschedule_for_follower(update.effective_user.id)
                 except Exception as e:
                     self.log.exception("reschedule after join failed: %s", e)
         else:
@@ -190,7 +196,6 @@ class GroupsHandler:
             if notif:
                 try:
                     await notif.reschedule_for_person(update.effective_user.id, update.effective_user.username)
-                    await notif.reschedule_for_follower(update.effective_user.id)
                 except Exception as e:
                     self.log.exception("reschedule after leave failed: %s", e)
         else:
@@ -249,7 +254,7 @@ class GroupsHandler:
             await update.message.reply_text("сначала выберите группу в управлении.", reply_markup=groups_menu_kb())
             return ConversationHandler.END
         await update.message.reply_text(
-            "введите @username или id. можно с датой: @user ДД-ММ(-ГГГГ).\nесли пользователя нет в боте — дата обязательна.",
+            "введите @username или id. можно с датой: @user дд-мм(-гггг).\nесли пользователя нет в боте — дата обязательна.",
             reply_markup=_cancel_kb(),
         )
         return STATE_WAIT_ADD_MEMBER
@@ -281,7 +286,8 @@ class GroupsHandler:
         if m:
             d, mo = int(m.group(1)), int(m.group(2))
             y = int(m.group(3)) if m.group(3) else None
-            bd = (d, mo, y)
+            if _valid_date(d, mo, y):
+                bd = (d, mo, y)
 
         # resolve registered profile if possible
         prof = None
@@ -291,22 +297,23 @@ class GroupsHandler:
             prof = await self.users.get_user_by_username(username)
         prof = dict(prof) if prof else None
 
+        notif = context.application.bot_data.get("notif_service")
+
         if prof:
             await self.groups.add_member(
                 gid, prof.get("user_id"), prof.get("username"),
                 prof.get("birth_day"), prof.get("birth_month"), prof.get("birth_year"),
             )
-            notif = context.application.bot_data.get("notif_service")
+            # reschedule: target person only
             if notif:
                 try:
                     await notif.reschedule_for_person(prof.get("user_id"), prof.get("username"))
-                    await notif.reschedule_for_follower(prof.get("user_id"))
                 except Exception as e:
                     self.log.exception("reschedule add member failed: %s", e)
             await update.message.reply_text("участник добавлен.")
         else:
             if not bd:
-                await update.message.reply_text("этого пользователя нет в боте. укажите дату как ДД-ММ(-ГГГГ).", reply_markup=_cancel_kb())
+                await update.message.reply_text("этого пользователя нет в боте. укажите дату как дд-мм(-гггг).", reply_markup=_cancel_kb())
                 return STATE_WAIT_ADD_MEMBER
             d, mo, y = bd
             await self.groups.add_member(gid, user_id, username, d, mo, y)
@@ -328,7 +335,7 @@ class GroupsHandler:
     async def del_member_wait(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         gid = context.user_data.get("mgmt_gid")
         if not gid:
-            await update.message.reply_text("сначала выберите группу в управлении.", reply_markup=groups_menu_kb())
+            await update.message.reply_text("сначала выберите группу в управлении.", reply_markup=groups_menu_kk())
             return ConversationHandler.END
 
         text = (update.message.text or "").strip()
@@ -357,14 +364,13 @@ class GroupsHandler:
         except Exception:
             ok = False
 
-        if ok and target_id:
-            notif = context.application.bot_data.get("notif_service")
-            if notif:
-                try:
-                    await notif.reschedule_for_person(target_id)
-                    await notif.reschedule_for_follower(target_id)
-                except Exception as e:
-                    self.log.exception("reschedule after delete member failed: %s", e)
+        # reschedule for person if registered id
+        notif = context.application.bot_data.get("notif_service")
+        if ok and target_id and notif:
+            try:
+                await notif.reschedule_for_person(target_id)
+            except Exception as e:
+                self.log.exception("reschedule after delete member failed: %s", e)
 
         await update.message.reply_text("участник удалён." if ok else "не удалось удалить участника.")
         await self._render_group_members(update, gid)

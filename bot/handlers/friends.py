@@ -31,6 +31,16 @@ def _fmt_bday(d: Optional[int], m: Optional[int], y: Optional[int]) -> str:
         return f"{int(d):02d}-{int(m):02d}" + (f"-{int(y)}" if y else "")
     return "не указан"
 
+def _valid_date(d: int, m: int, y: Optional[int]) -> bool:
+    import datetime as dt
+    try:
+        if y is None:
+            y = 2000
+        dt.date(int(y), int(m), int(d))
+        return True
+    except Exception:
+        return False
+
 def _parse_bday(text: str):
     t = (text or "").strip()
     m = re.search(r"\b(\d{2})-(\d{2})(?:-(\d{4}))?\b", t)
@@ -41,6 +51,8 @@ def _parse_bday(text: str):
     if not (1 <= d <= 31 and 1 <= mo <= 12):
         return None
     if y is not None and (y < 1900 or y > 2100):
+        return None
+    if not _valid_date(d, mo, y):
         return None
     return d, mo, y
 
@@ -71,7 +83,6 @@ class FriendsHandler:
         self.groups = groups
         self.log = logging.getLogger("friends")
 
-    # menu entry shows the list immediately
     async def menu_entry(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         rid = _log_id()
         uid = update.effective_user.id
@@ -105,7 +116,7 @@ class FriendsHandler:
     # add friend
     async def add_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
-            "введите @username или id. можно одной строкой: @username ДД-ММ(-ГГГГ).",
+            "введите @username или id. можно одной строкой: @username дд-мм(-гггг).",
             reply_markup=_cancel_kb(),
         )
         return STATE_WAIT_ADD
@@ -144,12 +155,11 @@ class FriendsHandler:
                 friend_user_id=prof.get("user_id"),
                 friend_username=prof.get("username"),
             )
-            # reschedule: follower and person
+            # reschedule: target person only (alerts for their followers)
             notif = context.application.bot_data.get("notif_service")
             if notif:
                 try:
                     await notif.reschedule_for_person(prof.get("user_id"), prof.get("username"))
-                    await notif.reschedule_for_follower(uid)
                 except Exception as e:
                     self.log.exception("add friend reschedule failed: %s", e)
 
@@ -164,20 +174,13 @@ class FriendsHandler:
                 friend_username=username,
                 birth_day=d, birth_month=m, birth_year=y,
             )
-            # reschedule follower only (person not registered)
-            notif = context.application.bot_data.get("notif_service")
-            if notif:
-                try:
-                    await notif.reschedule_for_follower(uid)
-                except Exception as e:
-                    self.log.exception("add friend fallback reschedule failed: %s", e)
-
+            # no reschedule_for_person if user not registered (no id to target)
             await update.message.reply_text("друг добавлен.", reply_markup=friends_menu_kb())
             return ConversationHandler.END
 
         context.user_data["pending_friend"] = {"user_id": user_id, "username": username}
         await update.message.reply_text(
-            "этот пользователь не найден в боте. укажите дату рождения (ДД-ММ-ГГГГ или ДД-ММ):",
+            "этот пользователь не найден в боте. укажите дату рождения (дд-мм-гггг или дд-мм):",
             reply_markup=_cancel_kb(),
         )
         return STATE_WAIT_ADD_DATE
@@ -206,14 +209,6 @@ class FriendsHandler:
             birth_day=d, birth_month=m, birth_year=y,
         )
         context.user_data.pop("pending_friend", None)
-
-        # reschedule follower only
-        notif = context.application.bot_data.get("notif_service")
-        if notif:
-            try:
-                await notif.reschedule_for_follower(uid)
-            except Exception as e:
-                self.log.exception("add friend date reschedule failed: %s", e)
 
         await update.message.reply_text("друг добавлен.", reply_markup=friends_menu_kb())
         return ConversationHandler.END
@@ -247,20 +242,17 @@ class FriendsHandler:
         except Exception:
             ok = False
 
-        # reschedule follower regardless
+        # reschedule for person (if we removed a registered friend)
         notif = context.application.bot_data.get("notif_service")
-        if notif:
+        if notif and user_id:
             try:
-                await notif.reschedule_for_follower(uid)
-                if user_id:
-                    await notif.reschedule_for_person(user_id)
+                await notif.reschedule_for_person(user_id)
             except Exception as e:
                 self.log.exception("delete friend reschedule failed: %s", e)
 
         await update.message.reply_text("друг удалён." if ok else "не удалось найти такого друга.", reply_markup=friends_menu_kb())
         return ConversationHandler.END
 
-    # conv factories
     def conversation_handlers(self):
         return [
             ConversationHandler(

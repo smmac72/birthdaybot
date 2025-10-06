@@ -15,8 +15,19 @@ log = logging.getLogger("start")
 # single state: waiting for birthday at registration
 AWAITING_REGISTRATION_BDAY = 1
 
+# helpers
 
-# utils
+def _valid_date(d: int, m: int, y: Optional[int]) -> bool:
+    # chill check via datetime; accept 29 feb; reject impossible combos like 31-11
+    import datetime as dt
+    try:
+        if y is None:
+            # pick a leap year so 29 feb is ok
+            y = 2000
+        dt.date(int(y), int(m), int(d))
+        return True
+    except Exception:
+        return False
 
 def _parse_bday(text: str) -> Optional[Tuple[int, int, Optional[int]]]:
     # accepts dd-mm-yyyy or dd-mm
@@ -25,8 +36,7 @@ def _parse_bday(text: str) -> Optional[Tuple[int, int, Optional[int]]]:
     if len(parts) not in (2, 3):
         return None
     try:
-        d = int(parts[0])
-        m = int(parts[1])
+        d = int(parts[0]); m = int(parts[1])
         y = int(parts[2]) if len(parts) == 3 else None
     except Exception:
         return None
@@ -34,42 +44,39 @@ def _parse_bday(text: str) -> Optional[Tuple[int, int, Optional[int]]]:
         return None
     if y is not None and (y < 1900 or y > 2100):
         return None
+    if not _valid_date(d, m, y):
+        return None
     return d, m, y
-
 
 @dataclass
 class StartHandler:
     users: UsersRepo
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # register user, save chat id, and decide whether to ask for birthday
+        # register user and optionally ask for birthday
         tg_user = update.effective_user
         chat_id = update.effective_chat.id if update.effective_chat else None
 
         u = await self.users.ensure_user(tg_user, chat_id=chat_id)
         if not u:
-            await update.message.reply_text("что-то пошло не так. попробуйте ещё раз позже.")
+            await update.message.reply_text("что-то пошло не так. попробуйте позже.", reply_markup=main_menu_kb())
             return ConversationHandler.END
 
-        # keep repos in app.bot_data (context.application, not update.application)
         app = context.application
         app.bot_data.setdefault("users_repo", self.users)
 
-        # if birthday set, just show main menu
         has_bday = bool(u.get("birth_day") and u.get("birth_month"))
         if has_bday:
             await update.message.reply_text("с возвращением!", reply_markup=main_menu_kb())
             return ConversationHandler.END
 
-        # ask for birthday
         await update.message.reply_text(
-            "введите дату рождения в формате ДД-ММ-ГГГГ или ДД-ММ (например, 15-05-1990 или 15-05):\n\n"
+            "введите дату рождения в формате дд-мм-гггг или дд-мм (например, 15-05-1990 или 15-05):\n\n"
             "нажмите «◀️ отмена» чтобы выйти.",
         )
         return AWAITING_REGISTRATION_BDAY
 
     async def reg_bday_entered(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # handle birthday input during registration
         text = (update.message.text or "").strip()
         if text == "◀️ отмена":
             await update.message.reply_text("регистрация отменена.", reply_markup=main_menu_kb())
@@ -77,54 +84,40 @@ class StartHandler:
 
         parsed = _parse_bday(text)
         if not parsed:
-            await update.message.reply_text("неверный формат. введите ДД-ММ-ГГГГ или ДД-ММ:")
+            await update.message.reply_text("не получилось. пример: 07-02 или 07-02-2002")
             return AWAITING_REGISTRATION_BDAY
 
         d, m, y = parsed
         uid = update.effective_user.id
 
         try:
-            # FIX: use existing repo method
+            # users repo in this tree uses update_bday, not set_birthday
             await self.users.update_bday(uid, d, m, y)
         except Exception as e:
             log.exception("failed to set birthday: %s", e)
             await update.message.reply_text("не удалось сохранить дату. попробуйте ещё раз.")
             return AWAITING_REGISTRATION_BDAY
 
-        # try to save chat id again to be safe
         try:
             if update.effective_chat:
                 await self.users.update_chat_id(uid, update.effective_chat.id)
         except Exception:
             pass
 
-        # best-effort propagation to friends/groups if repos are available
-        app = context.application
-        friends = app.bot_data.get("friends_repo")
-        groups = app.bot_data.get("groups_repo")
-
-        # propagate to direct followers if repo supports it
-        try:
-            if friends and hasattr(friends, "propagate_user_birthday"):
-                await friends.propagate_user_birthday(user_id=uid, day=d, month=m, year=y)
-        except Exception as e:
-            log.info("friends propagation skipped: %s", e)
-
-        # groups can cache birthdays; try to propagate if supported
-        try:
-            if groups and hasattr(groups, "propagate_user_birthday"):
-                await groups.propagate_user_birthday(user_id=uid, day=d, month=m, year=y)
-        except Exception as e:
-            log.info("groups propagation skipped: %s", e)
+        # reschedule for person so followers get proper triggers
+        notif = context.application.bot_data.get("notif_service")
+        if notif:
+            try:
+                await notif.reschedule_for_person(uid, update.effective_user.username)
+            except Exception as e:
+                log.info("reschedule after start bday set failed: %s", e)
 
         await update.message.reply_text(
-            f"ок, сохранил дату: {d:02d}-{m:02d}" + (f"-{y}" if y else "") + ".",
+            f"ок, сохранил: {d:02d}-{m:02d}" + (f"-{y}" if y else "") + ".",
             reply_markup=main_menu_kb(),
         )
         return ConversationHandler.END
 
-
-# helper to wire conversation in main if needed (optional)
 def conversation():
     return ConversationHandler(
         entry_points=[],
