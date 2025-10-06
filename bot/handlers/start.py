@@ -4,12 +4,27 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
 
+import datetime as dt
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters
+from telegram.ext import (
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    CommandHandler,
+    filters,
+)
 
 from ..db.repo_users import UsersRepo
 from ..keyboards import main_menu_kb
-from ..i18n import t, available_languages, language_button_text, parse_language_choice, set_lang, current_lang, language_label
+from ..i18n import (
+    t,
+    available_languages,
+    language_button_text,
+    parse_language_choice,
+    set_lang,
+    current_lang,
+    language_label,
+)
 
 log = logging.getLogger("start")
 
@@ -34,6 +49,11 @@ def _parse_bday(text: str) -> Optional[Tuple[int, int, Optional[int]]]:
         return None
     if y is not None and (y < 1900 or y > 2100):
         return None
+    try:
+        _ = dt.date(y if y else 2000, m, d)
+    except ValueError:
+        if not (m == 2 and d == 29):
+            return None
     return d, m, y
 
 
@@ -62,7 +82,6 @@ class StartHandler:
         # first-time language pick if no tz/lang in context (we store lang in context.user_data["lang"])
         lang_code = context.user_data.get("lang")
         if not lang_code:
-            # show explicit text, not zero-width
             cur = current_lang(update=update, context=context)
             lbl = language_label(cur)
             await update.message.reply_text(
@@ -74,13 +93,20 @@ class StartHandler:
         # if birthday is already set - straight to main menu
         has_bday = bool(u.get("birth_day") and u.get("birth_month"))
         if has_bday:
-            await update.message.reply_text(t("start_back", update=update, context=context), reply_markup=main_menu_kb(update=update, context=context))
+            await update.message.reply_text(
+                t("start_back", update=update, context=context),
+                reply_markup=main_menu_kb(update=update, context=context),
+            )
             return ConversationHandler.END
 
         # ask for birthday with a clean prompt
         await update.message.reply_text(
             t("start_bday_prompt", update=update, context=context),
-            reply_markup=ReplyKeyboardMarkup([[t("btn_cancel", update=update, context=context)]], resize_keyboard=True, one_time_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(
+                [[t("btn_cancel", update=update, context=context)]],
+                resize_keyboard=True,
+                one_time_keyboard=True,
+            ),
         )
         return AWAITING_REGISTRATION_BDAY
 
@@ -88,24 +114,43 @@ class StartHandler:
         # handle birthday input during registration
         text = (update.message.text or "").strip()
         if text == t("btn_cancel", update=update, context=context):
-            await update.message.reply_text(t("canceled", update=update, context=context), reply_markup=main_menu_kb(update=update, context=context))
+            await update.message.reply_text(
+                t("canceled", update=update, context=context),
+                reply_markup=main_menu_kb(update=update, context=context),
+            )
             return ConversationHandler.END
 
         parsed = _parse_bday(text)
         if not parsed:
-            await update.message.reply_text(t("start_bday_bad", update=update, context=context))
+            await update.message.reply_text(
+                t("start_bday_bad", update=update, context=context)
+            )
             return AWAITING_REGISTRATION_BDAY
 
         d, m, y = parsed
+
+        if y is not None:
+            try:
+                dt.date(y, m, d)
+            except ValueError:
+                if m == 2 and d == 29:
+                    y = None
+                else:
+                    await update.message.reply_text(
+                        t("start_bday_bad", update=update, context=context)
+                    )
+                    return AWAITING_REGISTRATION_BDAY
+
         uid = update.effective_user.id
 
         # save birthday
         try:
-            # repo has update_bday;
             await self.users.update_bday(uid, d, m, y)
         except Exception as e:
             log.exception("failed to set birthday: %s", e)
-            await update.message.reply_text(t("start_bday_bad", update=update, context=context))
+            await update.message.reply_text(
+                t("start_bday_bad", update=update, context=context)
+            )
             return AWAITING_REGISTRATION_BDAY
 
         # re-save chat id for safety
@@ -115,8 +160,22 @@ class StartHandler:
         except Exception:
             pass
 
+        notif = context.application.bot_data.get("notif_service")
+        if notif:
+            try:
+                await notif.reschedule_for_person(uid, update.effective_user.username)
+            except Exception as e:
+                log.exception("reschedule after registration birthday failed: %s", e)
+
         await update.message.reply_text(
-            t("start_bday_saved", update=update, context=context, d=f"{d:02d}", m=f"{m:02d}", y=(f"-{y}" if y else "")),
+            t(
+                "start_bday_saved",
+                update=update,
+                context=context,
+                d=f"{d:02d}",
+                m=f"{m:02d}",
+                y=(f"-{y}" if y else ""),
+            ),
             reply_markup=main_menu_kb(update=update, context=context),
         )
         return ConversationHandler.END
@@ -125,7 +184,10 @@ class StartHandler:
         text = (update.message.text or "").strip()
         if text == t("btn_cancel", update=update, context=context):
             # if canceled, still show main menu with current lang
-            await update.message.reply_text(t("main_menu_title", update=update, context=context), reply_markup=main_menu_kb(update=update, context=context))
+            await update.message.reply_text(
+                t("main_menu_title", update=update, context=context),
+                reply_markup=main_menu_kb(update=update, context=context),
+            )
             return ConversationHandler.END
 
         code = parse_language_choice(text)
@@ -150,23 +212,33 @@ class StartHandler:
         u = await self.users.get_user(uid)
         has_bday = bool(u and u.get("birth_day") and u.get("birth_month"))
         if has_bday:
-            await update.message.reply_text(t("start_back", update=update, context=context), reply_markup=main_menu_kb(update=update, context=context))
+            await update.message.reply_text(
+                t("start_back", update=update, context=context),
+                reply_markup=main_menu_kb(update=update, context=context),
+            )
             return ConversationHandler.END
 
         await update.message.reply_text(
             t("start_bday_prompt", update=update, context=context),
-            reply_markup=ReplyKeyboardMarkup([[t("btn_cancel", update=update, context=context)]], resize_keyboard=True, one_time_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(
+                [[t("btn_cancel", update=update, context=context)]],
+                resize_keyboard=True,
+                one_time_keyboard=True,
+            ),
         )
         return AWAITING_REGISTRATION_BDAY
 
 
-# helper to wire conversation in main if needed (optional)
-def conversation():
+def conversation(start_handler: StartHandler) -> ConversationHandler:
     return ConversationHandler(
-        entry_points=[],
+        entry_points=[CommandHandler("start", start_handler.start)],
         states={
-            AWAITING_REGISTRATION_BDAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, StartHandler.reg_bday_entered)],
-            AWAITING_LANG_PICK: [MessageHandler(filters.TEXT & ~filters.COMMAND, StartHandler.lang_pick_entered)],
+            AWAITING_REGISTRATION_BDAY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.reg_bday_entered)
+            ],
+            AWAITING_LANG_PICK: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.lang_pick_entered)
+            ],
         },
         fallbacks=[],
         name="conv_start",
