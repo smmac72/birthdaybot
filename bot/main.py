@@ -23,7 +23,7 @@ from .db.repo_groups import GroupsRepo
 from .db.repo_friends import FriendsRepo
 
 # handlers
-from .handlers.start import StartHandler, AWAITING_LANG_PICK, AWAITING_REGISTRATION_BDAY
+from .handlers.start import StartHandler, AWAITING_REGISTRATION_BDAY, AWAITING_LANG_PICK
 from .handlers.groups import GroupsHandler
 from .handlers.friends import FriendsHandler
 from .handlers.settings import SettingsHandler, S_WAIT_BDAY, S_WAIT_TZ, S_WAIT_ALERT, S_WAIT_LANG
@@ -32,11 +32,12 @@ from .handlers.about import AboutHandler
 # keyboards
 from .keyboards import main_menu_kb
 
+# i18n
+from .i18n import t, btn_regex
+
 # notif service
 from .services.notif_service import NotifService
 
-# i18n
-from .i18n import t, btn_regex
 
 # logging setup
 def _setup_logging() -> None:
@@ -48,6 +49,7 @@ def _setup_logging() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("telegram").setLevel(logging.WARNING)
 
+
 # build repos
 def _build_repos() -> Tuple[UsersRepo, GroupsRepo, FriendsRepo]:
     db_path = config.DB_PATH
@@ -56,11 +58,13 @@ def _build_repos() -> Tuple[UsersRepo, GroupsRepo, FriendsRepo]:
     friends = FriendsRepo(db_path)
     return users, groups, friends
 
+
 # main menu
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(t("main_menu_title", update=update, context=context), reply_markup=main_menu_kb(update=update, context=context))
 
-# birthdays overview (unchanged, still russian lines inside — keep for later i18n pass if needed)
+
+# birthdays overview — now i18n
 async def show_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log = logging.getLogger("birthdays")
     users: UsersRepo = context.application.bot_data["users_repo"]
@@ -69,6 +73,8 @@ async def show_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     uid = update.effective_user.id
     uname = (update.effective_user.username or "").lower()
+
+    # helpers (keep simple)
 
     def _icon_registered(user_id: Optional[int]) -> str:
         return "✅" if user_id else "⚪️"
@@ -100,6 +106,7 @@ async def show_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     contacts: Dict[Tuple[Optional[int], Optional[str]], Dict] = {}
 
+    # collect friends
     try:
         f_rows = await friends.list_for_user(uid)
         for r in f_rows:
@@ -125,6 +132,7 @@ async def show_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         log.exception("friends fetch failed: %s", e)
 
+    # collect co-members from groups
     try:
         g_rows = await groups.list_user_groups(uid)
         for g in g_rows:
@@ -133,6 +141,7 @@ async def show_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 md = dict(m)
                 mid = md.get("user_id")
                 mname = (md.get("username") or "").lower() if md.get("username") else None
+                # skip self
                 if (mid and mid == uid) or (not mid and mname and mname == uname):
                     continue
                 key = (mid, mname)
@@ -180,9 +189,11 @@ async def show_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("\n".join(lines), reply_markup=main_menu_kb(update=update, context=context))
 
+
 # global error handler
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.getLogger("birthdaybot").exception("unhandled error", exc_info=context.error)
+
 
 # test alerts command: /alert_test <hours>
 async def alert_test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -200,7 +211,7 @@ async def alert_test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hours = max(0, min(72, hours))
     person_id = update.effective_user.id
     sent = await notif.test_broadcast(person_id=person_id, hours=hours)
-    await update.message.reply_text(f"test: sent {sent} notifications.")
+    await update.message.reply_text(f"test: sent {sent} alerts.")
 
 async def who_follows_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     notif: NotifService = context.application.bot_data.get("notif_service")  # type: ignore
@@ -219,28 +230,31 @@ def build_application() -> Application:
 
     app = ApplicationBuilder().token(config.BOT_TOKEN).build()
 
+    # stash repos
     app.bot_data["users_repo"] = users_repo
     app.bot_data["groups_repo"] = groups_repo
     app.bot_data["friends_repo"] = friends_repo
 
+    # handler instances
     start_handler = StartHandler(users_repo)
     groups_handler = GroupsHandler(groups_repo, users_repo)
     friends_handler = FriendsHandler(users_repo, friends_repo, groups_repo)
     settings_handler = SettingsHandler(users_repo, friends_repo, groups_repo)
     about_handler = AboutHandler()
 
+    # errors
     app.add_error_handler(on_error)
 
-    # start / registration (language first)
+    # start / registration (+ language pick)
     app.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler("start", start_handler.start)],
             states={
-                AWAITING_LANG_PICK: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.lang_pick_entered)
-                ],
                 AWAITING_REGISTRATION_BDAY: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.reg_bday_entered)
+                ],
+                AWAITING_LANG_PICK: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.lang_pick_entered)
                 ],
             },
             fallbacks=[],
@@ -250,8 +264,12 @@ def build_application() -> Application:
         group=0,
     )
 
-    # main menu buttons (language-aware)
+    # main menu buttons (all through btn_regex -> i18n-proof)
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_birthdays")), show_birthdays), group=0)
+
+    # groups flows
+    for ch in groups_handler.conversation_handlers():
+        app.add_handler(ch, group=0)
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_groups")), groups_handler.menu_entry), group=0)
 
     # friends flows
@@ -264,6 +282,8 @@ def build_application() -> Application:
     for ch in settings_handler.conversation_handlers():
         app.add_handler(ch, group=2)
 
+    # language is inside settings handler as a convo (S_WAIT_LANG)
+
     # about / donations
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_about")), about_handler.menu_entry), group=3)
     app.add_handler(MessageHandler(filters.Regex(r"^\⭐ 50$"), about_handler.donate_50), group=3)
@@ -273,8 +293,8 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, about_handler.successful_payment), group=3)
 
     # exit/back to main
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_back_main")), show_main_menu), group=3)
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_exit")), show_main_menu), group=3)
+    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_back_main")), show_main_menu), group=3)
 
     # test alerts
     app.add_handler(CommandHandler("alert_test", alert_test_cmd), group=3)
@@ -309,9 +329,11 @@ def build_application() -> Application:
 
     return app
 
+
 def main() -> None:
     app = build_application()
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
