@@ -1,24 +1,68 @@
-name: deploy
+name: Deploy bots
 
 on:
-  workflow_run:
-    workflows: ["build-and-push"]
-    types: [completed]
-    branches: [main]
+  push:
+    branches:
+      - main
+      - stage   # или develop — как назовёшь ветку для стейджа
 
 jobs:
   deploy-prod:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    name: Deploy PROD (main)
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: production
     steps:
-      - name: SSH deploy
+      - name: Deploy over SSH to PROD
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          script_stop: true
           script: |
+            set -euo pipefail
             cd ~/apps/birthdaybot
-            docker compose pull
+
+            if [ -d .git ]; then
+              git fetch --all --prune
+              git reset --hard origin/main
+            else
+              git clone --depth=1 git@github.com:smmac72/birthdaybot.git .
+            fi
+
+            docker compose build --pull
             docker compose --env-file .env.prod up -d birthdaybot-prod adminbot-prod
-            docker system prune -f
+
+            docker image prune -f
+
+  deploy-stg:
+    name: Deploy STAGE (stage)
+    if: github.ref == 'refs/heads/stage'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Deploy over SSH to STAGE
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd ~/apps/birthdaybot
+
+            if [ -d .git ]; then
+              git fetch --all --prune
+              git reset --hard origin/stage
+            else
+              git clone --depth=1 -b stage git@github.com:smmac72/birthdaybot.git .
+            fi
+
+            docker compose build --pull
+            docker compose --env-file .env.stg up -d birthdaybot-stg adminbot-stg
+
+            docker image prune -f
