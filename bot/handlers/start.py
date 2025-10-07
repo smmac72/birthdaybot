@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
-from telegram import ParseMode
+from telegram.constants import ParseMode
 from .. import config
 
 import datetime as dt
