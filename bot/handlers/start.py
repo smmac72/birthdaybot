@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
+from telegram import ParseMode
+from .. import config
 
 import datetime as dt
 from telegram import Update, ReplyKeyboardMarkup
@@ -178,6 +180,25 @@ class StartHandler:
             ),
             reply_markup=main_menu_kb(update=update, context=context),
         )
+
+        ## alert about registration
+        try:
+            if config.ADMIN_CHAT_ID:
+                user = update.effective_user
+                msg = (
+                    f"👤 <b>Новый пользователь зарегистрировался</b>\n"
+                    f"ID: <code>{user.id}</code>\n"
+                    f"Имя: {user.full_name}\n"
+                    f"Язык: {current_lang(update=update, context=context)}\n"
+                    f"Дата рождения: {d:02d}-{m:02d}{('-' + str(y)) if y else ''}"
+                )
+                await context.bot.send_message(
+                    chat_id=config.ADMIN_CHAT_ID,
+                    text=msg,
+                    parse_mode=ParseMode.HTML,
+                )
+        except Exception as e:
+            log.warning("failed to notify admin about registration: %s", e)
         return ConversationHandler.END
 
     async def lang_pick_entered(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
