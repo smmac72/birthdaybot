@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
-from telegram.constants import ParseMode
-from .. import config
 
 import datetime as dt
 from telegram import Update, ReplyKeyboardMarkup
@@ -182,23 +180,8 @@ class StartHandler:
         )
 
         ## alert about registration
-        try:
-            if config.ADMIN_CHAT_ID:
-                user = update.effective_user
-                msg = (
-                    f"👤 <b>Новый пользователь зарегистрировался</b>\n"
-                    f"ID: <code>{user.id}</code>\n"
-                    f"Имя: {user.full_name}\n"
-                    f"Язык: {current_lang(update=update, context=context)}\n"
-                    f"Дата рождения: {d:02d}-{m:02d}{('-' + str(y)) if y else ''}"
-                )
-                await context.bot.send_message(
-                    chat_id=config.ADMIN_CHAT_ID,
-                    text=msg,
-                    parse_mode=ParseMode.HTML,
-                )
-        except Exception as e:
-            log.warning("failed to notify admin about registration: %s", e)
+        await _notify_admins_about_registration(update, context, {"birth_day": d, "birth_month": m, "birth_year": y})
+
         return ConversationHandler.END
 
     async def lang_pick_entered(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -248,6 +231,40 @@ class StartHandler:
             ),
         )
         return AWAITING_REGISTRATION_BDAY
+
+# logger-helper
+async def _notify_admins_about_registration(update, context, user_data: dict, lang_code: str = "unknown"):
+    from .. import config
+    from telegram.constants import ParseMode
+
+    if not getattr(config, "ADMIN_ALLOWED_IDS", None):
+        return
+
+    user = update.effective_user
+    d = user_data.get("birth_day")
+    m = user_data.get("birth_month")
+    y = user_data.get("birth_year")
+
+    msg = (
+        f"👤 <b>new user!</b>\n"
+        f"id: <code>{user.id}</code>\n"
+        f"name: {user.full_name}\n"
+        f"lang: {lang_code}\n"
+        f"date: "
+        f"{d:02d}-{m:02d}{('-' + str(y)) if y else '' if d and m else '—'}"
+    )
+
+    for aid in getattr(config, "ADMIN_ALLOWED_IDS", []):
+        try:
+            await context.bot.send_message(chat_id=aid, text=msg, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logging.getLogger("start").warning(f"failed to notify admin {aid}: {e}")
+
+    if getattr(config, "ADMIN_CHAT_ID", 0):
+        try:
+            await context.bot.send_message(chat_id=config.ADMIN_CHAT_ID, text=msg, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
 
 
 def conversation(start_handler: StartHandler) -> ConversationHandler:
