@@ -180,7 +180,8 @@ class StartHandler:
         )
 
         ## alert about registration
-        await _notify_admins_about_registration(update, context, {"birth_day": d, "birth_month": m, "birth_year": y})
+        urow = await self.users.get_user(uid)
+        await _notify_admin_about_registration(update, context, user_row=urow, lang_code=(context.user_data.get("lang") or "unknown"))
 
         return ConversationHandler.END
 
@@ -233,38 +234,38 @@ class StartHandler:
         return AWAITING_REGISTRATION_BDAY
 
 # logger-helper
-async def _notify_admins_about_registration(update, context, user_data: dict, lang_code: str = "unknown"):
-    from .. import config
-    from telegram.constants import ParseMode
+async def _notify_admin_about_registration(update, context, *, user_row: dict, lang_code: str = "unknown"):
+    try:
+        from .. import config
+    except Exception:
+        return
 
-    if not getattr(config, "ADMIN_ALLOWED_IDS", None):
+    admin_chat_id = int(getattr(config, "ADMIN_CHAT_ID", 0) or 0)
+    if not admin_chat_id:
         return
 
     user = update.effective_user
-    d = user_data.get("birth_day")
-    m = user_data.get("birth_month")
-    y = user_data.get("birth_year")
+    d = user_row.get("birth_day")
+    m = user_row.get("birth_month")
+    y = user_row.get("birth_year")
+
+    if d and m:
+        bday_str = f"{int(d):02d}-{int(m):02d}" + (f"-{int(y)}" if y else "")
+    else:
+        bday_str = "—"
 
     msg = (
-        f"👤 <b>new user!</b>\n"
+        "👤 <b>new user!</b>\n"
         f"id: <code>{user.id}</code>\n"
         f"name: {user.full_name}\n"
-        f"lang: {lang_code}\n"
-        f"date: "
-        f"{d:02d}-{m:02d}{('-' + str(y)) if y else '' if d and m else '—'}"
+        f"username: @{user.username if user.username else '—'}\n"
+        f"date of birth: {bday_str}"
     )
 
-    for aid in getattr(config, "ADMIN_ALLOWED_IDS", []):
-        try:
-            await context.bot.send_message(chat_id=aid, text=msg, parse_mode=ParseMode.HTML)
-        except Exception as e:
-            logging.getLogger("start").warning(f"failed to notify admin {aid}: {e}")
-
-    if getattr(config, "ADMIN_CHAT_ID", 0):
-        try:
-            await context.bot.send_message(chat_id=config.ADMIN_CHAT_ID, text=msg, parse_mode=ParseMode.HTML)
-        except Exception:
-            pass
+    try:
+        await context.bot.send_message(chat_id=admin_chat_id, text=msg, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logging.getLogger("start").warning(f"admin notify failed: {e}")
 
 
 def conversation(start_handler: StartHandler) -> ConversationHandler:
