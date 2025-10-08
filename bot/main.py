@@ -1,12 +1,12 @@
+# FILE: bot/main.py
 from __future__ import annotations
-
-# main entry with maintenance guard and admin events polling
 
 import asyncio
 import logging
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -15,11 +15,10 @@ from telegram.ext import (
     MessageHandler,
     PreCheckoutQueryHandler,
     ContextTypes,
-    filters,
     ApplicationHandlerStop,
-    Defaults
+    Defaults,
+    filters,
 )
-from telegram.constants import ParseMode
 
 from . import config
 
@@ -27,28 +26,37 @@ from . import config
 from .db.repo_users import UsersRepo
 from .db.repo_groups import GroupsRepo
 from .db.repo_friends import FriendsRepo
+from .db.repo_wishlist import WishlistRepo
 
 # handlers
 from .handlers.start import StartHandler, AWAITING_LANG_PICK, AWAITING_REGISTRATION_BDAY
 from .handlers.groups import GroupsHandler
 from .handlers.friends import FriendsHandler
-from .handlers.settings import SettingsHandler, S_WAIT_BDAY, S_WAIT_TZ, S_WAIT_ALERT_DAYS, S_WAIT_ALERT_TIME, S_WAIT_LANG
+from .handlers.settings import (
+    SettingsHandler,
+    S_WAIT_BDAY,
+    S_WAIT_TZ,
+    S_WAIT_ALERT_DAYS,
+    S_WAIT_ALERT_TIME,
+    S_WAIT_LANG,
+)
 from .handlers.about import AboutHandler
+from .handlers.birthdays import BirthdaysHandler
+from .handlers.wishlist import WishlistHandler
 
 # keyboards
 from .keyboards import main_menu_kb
 
-# notif service
+# services
 from .services.notif_service import NotifService
 
 # i18n
 from .i18n import t, btn_regex
 
-# re-use admin repo to read events and chat list
+# admin repo (events)
 from .adminbot.repo import AdminRepo
 
 
-# logging setup
 def _setup_logging() -> None:
     level = getattr(logging, (config.LOG_LEVEL or "INFO").upper(), logging.INFO)
     logging.basicConfig(
@@ -59,16 +67,14 @@ def _setup_logging() -> None:
     logging.getLogger("telegram").setLevel(logging.WARNING)
 
 
-# build repos
-def _build_repos() -> Tuple[UsersRepo, GroupsRepo, FriendsRepo]:
+def _build_repos() -> Tuple[UsersRepo, GroupsRepo, FriendsRepo, WishlistRepo]:
     db_path = config.DB_PATH
     users = UsersRepo(db_path)
     groups = GroupsRepo(db_path)
     friends = FriendsRepo(db_path)
-    return users, groups, friends
+    wishlist = WishlistRepo(db_path)
+    return users, groups, friends, wishlist
 
-
-# helpers
 
 def _is_admin(update: Update) -> bool:
     try:
@@ -78,41 +84,31 @@ def _is_admin(update: Update) -> bool:
     allowed = getattr(config, "ADMIN_ALLOWED_IDS", []) or []
     return bool(uid and uid in allowed)
 
+
 async def _broadcast_key_to_all(app: Application, users_repo: UsersRepo, key: str) -> int:
-    # per-user localization by reading profile lang
     repo = AdminRepo(config.DB_PATH)
     chat_ids = await repo.list_all_chat_ids()
     sent = 0
     for cid in chat_ids:
-        lang = "en"
         try:
-            u = await users_repo.get_user(int(cid))
-            if u and u.get("lang"):
-                lang = str(u["lang"])
-        except Exception:
-            pass
-        # NOTE: sending plain key text (t() without context falls back to default) —
-        # per-user language broadcast is handled by the main bot below when it reads admin_events.
-        text = t(key)
-        try:
-            await app.bot.send_message(chat_id=cid, text=text)
+            await app.bot.send_message(chat_id=cid, text=t(key))
             sent += 1
         except Exception:
             pass
     return sent
 
 
-# main menu
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(t("main_menu_title"), reply_markup=main_menu_kb(context=context))
+    await (update.effective_message or update.message).reply_text(
+        t("main_menu_title"),
+        reply_markup=main_menu_kb(update=update, context=context),
+    )
 
 
-# global error handler
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.getLogger("birthdaybot").exception("unhandled error", exc_info=context.error)
 
 
-# test alerts command: /alert_test <hours>
 async def alert_test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     app = context.application
     notif: NotifService = app.bot_data.get("notif_service")  # type: ignore
@@ -131,17 +127,13 @@ async def alert_test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"test: sent {sent}.")
 
 
-# maintenance guard (soft): block any user input except admins
 async def maintenance_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     maint = context.application.bot_data.get("maintenance") or {}
     if not maint.get("enabled"):
-        return  # pass through
-
-    # admins bypass
+        return
     if _is_admin(update):
         return
 
-    # hard/soft messages
     mode = maint.get("mode", "soft")
     key = maint.get("key") or ("maintenance_hard" if mode == "hard" else "maintenance_soft")
 
@@ -154,11 +146,10 @@ async def maintenance_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         cd[mem_key] = True
 
-    # CRITICAL: stop further processing for this update
-    raise ApplicationHandlerStop
+    from telegram.ext import ApplicationHandlerStop as Stop
+    raise Stop
 
 
-# --- admin events polling (from admin_events table)
 async def _process_admin_events(context: ContextTypes.DEFAULT_TYPE):
     app = context.application
     users_repo: UsersRepo = app.bot_data["users_repo"]
@@ -178,11 +169,14 @@ async def _process_admin_events(context: ContextTypes.DEFAULT_TYPE):
     for ev in events:
         kind = ev.get("kind")
         payload = ev.get("payload") or {}
+
         if kind == "maint":
             key = payload.get("key") or "maintenance_soft"
+
             if key == "maintenance_on_soft":
                 app.bot_data["maintenance"] = {"enabled": True, "mode": "soft", "key": "maintenance_soft"}
                 await _broadcast_key_to_all(app, users_repo, "maintenance_soft")
+
             elif key == "maintenance_on_hard":
                 app.bot_data["maintenance"] = {"enabled": True, "mode": "hard", "key": "maintenance_hard"}
                 await _broadcast_key_to_all(app, users_repo, "maintenance_hard")
@@ -191,16 +185,20 @@ async def _process_admin_events(context: ContextTypes.DEFAULT_TYPE):
                         await notif.shutdown()
                 except Exception:
                     pass
+
                 async def _stop():
                     await asyncio.sleep(1.0)
                     try:
                         await app.stop()
                     except Exception:
                         pass
+
                 asyncio.create_task(_stop())
+
             elif key == "maintenance_off":
                 app.bot_data["maintenance"] = {"enabled": False, "mode": "soft", "key": None}
                 await _broadcast_key_to_all(app, users_repo, "maintenance_off")
+
             done_ids.append(int(ev["id"]))
         else:
             done_ids.append(int(ev["id"]))
@@ -212,32 +210,38 @@ async def _process_admin_events(context: ContextTypes.DEFAULT_TYPE):
         pass
 
 
-# build application and register handlers
 def build_application() -> Application:
     _setup_logging()
     log = logging.getLogger("birthdaybot")
 
-    users_repo, groups_repo, friends_repo = _build_repos()
+    users_repo, groups_repo, friends_repo, wishlist_repo = _build_repos()
+
     defaults = Defaults(parse_mode=ParseMode.HTML)
     app = ApplicationBuilder().token(config.BOT_TOKEN).defaults(defaults).build()
 
+    # stash repos
     app.bot_data["users_repo"] = users_repo
     app.bot_data["groups_repo"] = groups_repo
     app.bot_data["friends_repo"] = friends_repo
+    app.bot_data["wishlist_repo"] = wishlist_repo
     app.bot_data.setdefault("maintenance", {"enabled": False, "mode": "soft", "key": None})
 
+    # handlers instances
     start_handler = StartHandler(users_repo)
     groups_handler = GroupsHandler(groups_repo, users_repo)
     friends_handler = FriendsHandler(users_repo, friends_repo, groups_repo)
     settings_handler = SettingsHandler(users_repo, friends_repo, groups_repo)
     about_handler = AboutHandler()
+    birthdays_handler = BirthdaysHandler(users_repo, friends_repo, groups_repo)
+    wishlist_handler = WishlistHandler(users_repo, wishlist_repo)
+
+    # 👇 важно: ссылка для возврата из вишлиста по «Отмена»
+    app.bot_data["birthdays_handler"] = birthdays_handler
 
     app.add_error_handler(on_error)
-
-    # maintenance guard first (very early group)
     app.add_handler(MessageHandler(filters.ALL, maintenance_guard), group=-100)
 
-    # start / registration (add language state)
+    # /start
     app.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler("start", start_handler.start)],
@@ -252,28 +256,20 @@ def build_application() -> Application:
         group=0,
     )
 
-    # birthdays screen
-    async def show_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        from .handlers.birthdays import BirthdaysHandler
-        bh = context.application.bot_data.get("birthdays_handler")
-        if not bh:
-            bh = BirthdaysHandler(users_repo, friends_repo, groups_repo)
-            context.application.bot_data["birthdays_handler"] = bh
-        await bh.menu_entry(update, context)
+    # Birthdays root
+    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_birthdays")), birthdays_handler.menu_entry), group=0)
 
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_birthdays")), show_birthdays), group=0)
-
-    # groups flows
+    # Groups
     for ch in groups_handler.conversation_handlers():
         app.add_handler(ch, group=0)
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_groups")), groups_handler.menu_entry), group=0)
 
-    # friends flows
+    # Friends
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_friends")), friends_handler.menu_entry), group=1)
     for ch in friends_handler.conversation_handlers():
         app.add_handler(ch, group=1)
 
-    # settings
+    # Settings
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_settings")), settings_handler.menu_entry), group=2)
 
     app.add_handler(
@@ -323,56 +319,71 @@ def build_application() -> Application:
         group=2,
     )
 
-    # about / donations
+    # Wishlist
+    for ch in wishlist_handler.conversation_handlers():
+        app.add_handler(ch, group=1)
+    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_my")), wishlist_handler.my_list), group=1)
+    # ВАЖНО: не добавляем отдельные handlers для btn_wishlist_edit/view — они уже entry_points разговоров.
+
+    # About / donations
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_about")), about_handler.menu_entry), group=3)
-    app.add_handler(MessageHandler(filters.Regex(r"^\⭐ 50$"), about_handler.donate_50), group=3)
-    app.add_handler(MessageHandler(filters.Regex(r"^\⭐ 100$"), about_handler.donate_100), group=3)
-    app.add_handler(MessageHandler(filters.Regex(r"^\⭐ 500$"), about_handler.donate_500), group=3)
+    app.add_handler(MessageHandler(filters.Regex(r"^\⭐\s*50$"), about_handler.donate_50), group=3)
+    app.add_handler(MessageHandler(filters.Regex(r"^\⭐\s*100$"), about_handler.donate_100), group=3)
+    app.add_handler(MessageHandler(filters.Regex(r"^\⭐\s*500$"), about_handler.donate_500), group=3)
     app.add_handler(PreCheckoutQueryHandler(about_handler.precheckout), group=3)
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, about_handler.successful_payment), group=3)
 
-    # exit/back to main
+    # Back to main
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_exit")), show_main_menu), group=3)
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_back_main")), show_main_menu), group=3)
 
-    # test alerts
+    # Commands
     app.add_handler(CommandHandler("alert_test", alert_test_cmd), group=3)
 
-    # debug logger last
     async def log_incoming(update: Update, _):
         if update.message and update.message.text:
             logging.getLogger("incoming").info("text=%r", update.message.text)
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, log_incoming), group=99)
 
-    # post-init: schedule window, daily refresh, admin events poller
     async def _post_init(application: Application):
         if getattr(application, "job_queue", None) is None:
             log.info("job queue not available, skipping schedule")
             return
+
         users = application.bot_data.get("users_repo")
         groups = application.bot_data.get("groups_repo")
         friends = application.bot_data.get("friends_repo")
         notif = NotifService(application, users, groups, friends)
         application.bot_data["notif_service"] = notif
+
         try:
-            horizon = getattr(config, "SCHEDULE_HORIZON_DAYS", 7)
+            horizon_raw = getattr(config, "SCHEDULE_HORIZON_DAYS", 7)
+            try:
+                horizon = int(horizon_raw)
+            except Exception:
+                horizon = 7
+
             await notif.schedule_all(horizon_days=horizon)
             await notif.schedule_daily_refresh(at_hour=3)
-            application.job_queue.run_repeating(_process_admin_events, interval=5.0, first=3.0, name="admin_events_poll")
+
+            application.job_queue.run_repeating(
+                _process_admin_events,
+                interval=5.0,
+                first=3.0,
+                name="admin_events_poll",
+            )
             log.info("birthday notifications scheduled, daily refresh set, admin events poller on")
         except Exception as e:
             log.exception("post-init failed: %s", e)
 
     app.post_init = _post_init
-
     return app
 
 
 def main() -> None:
     app = build_application()
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
