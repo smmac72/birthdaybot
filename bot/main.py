@@ -274,7 +274,7 @@ def build_application() -> Application:
     # Groups
     for ch in groups_handler.conversation_handlers():
         app.add_handler(ch, group=0)
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_groups")), groups_handler.menu_entry), group=1)
+    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_groups")), groups_handler.menu_entry), group=0)
 
     # Friends
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_friends")), friends_handler.menu_entry), group=1)
@@ -332,12 +332,11 @@ def build_application() -> Application:
     )
 
     for ch in wishlist_handler.conversation_handlers():
-        app.add_handler(ch, group=0)
+        app.add_handler(ch, group=1)
 
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_my")), wishlist_handler.my_list), group=0)
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_edit")), wishlist_handler.edit_start), group=0)
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_view")), wishlist_handler.view_start), group=0)
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_back")), birthdays_handler.menu_entry), group=0)
+    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_my")), wishlist_handler.my_list), group=1)
+    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_edit")), wishlist_handler.edit_start), group=1)
+    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_view")), wishlist_handler.view_start), group=1)
 
     # About / donations
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_about")), about_handler.menu_entry), group=3)
