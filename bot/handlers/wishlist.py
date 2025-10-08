@@ -106,7 +106,7 @@ def _sort_items_by_price(items: List[Dict]) -> List[Dict]:
 
 
 class WishlistHandler:
-    def __init__(self, wishlist: WishlistRepo, users: UsersRepo):
+    def __init__(self, users: UsersRepo, wishlist: WishlistRepo):
         self.wishlist = wishlist
         self.users = users
 

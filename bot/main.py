@@ -69,12 +69,12 @@ def _setup_logging() -> None:
 
 
 # ----------------- repos -----------------
-def _build_repos() -> Tuple[UsersRepo, GroupsRepo, FriendsRepo, Optional[WishlistRepo]]:
+def _build_repos() -> Tuple[UsersRepo, GroupsRepo, FriendsRepo, WishlistRepo]:
     db_path = config.DB_PATH
     users = UsersRepo(db_path)
     groups = GroupsRepo(db_path)
     friends = FriendsRepo(db_path)
-    wishlist = WishlistRepo(db_path) if WishlistRepo else None
+    wishlist = WishlistRepo(db_path)
     return users, groups, friends, wishlist
 
 
@@ -233,8 +233,7 @@ def build_application() -> Application:
     app.bot_data["users_repo"] = users_repo
     app.bot_data["groups_repo"] = groups_repo
     app.bot_data["friends_repo"] = friends_repo
-    if wishlist_repo:
-        app.bot_data["wishlist_repo"] = wishlist_repo
+    app.bot_data["wishlist_repo"] = wishlist_repo
     app.bot_data.setdefault("maintenance", {"enabled": False, "mode": "soft", "key": None})
 
     # handlers instances
@@ -244,10 +243,7 @@ def build_application() -> Application:
     settings_handler = SettingsHandler(users_repo, friends_repo, groups_repo)
     about_handler = AboutHandler()
     birthdays_handler = BirthdaysHandler(users_repo, friends_repo, groups_repo)
-
-    wishlist_handler = None
-    if WishlistHandler and wishlist_repo:
-        wishlist_handler = WishlistHandler(users_repo, wishlist_repo)
+    wishlist_handler = WishlistHandler(users_repo, wishlist_repo)
 
     app.add_error_handler(on_error)
 
