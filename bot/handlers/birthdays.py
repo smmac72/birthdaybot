@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes
 from ..db.repo_users import UsersRepo
 from ..db.repo_groups import GroupsRepo
 from ..db.repo_friends import FriendsRepo
-from ..keyboards import main_menu_kb
+from ..keyboards import birthdays_wishlist_kb
 from ..i18n import t
 
 def _log_id() -> str:
@@ -50,16 +50,6 @@ def _when_str(update: Update, context: ContextTypes.DEFAULT_TYPE, days: int) -> 
     if days >= 10**8:
         return t("when_unknown", update=update, context=context)
     return t("when_in_days", update=update, context=context, n=days)
-
-def _wishlist_menu_kb(*, update=None, context=None):
-    from telegram import ReplyKeyboardMarkup
-    from ..i18n import t
-    rows = [
-        [t("btn_wishlist_my", update=update, context=context), t("btn_wishlist_edit", update=update, context=context)],
-        [t("btn_wishlist_view", update=update, context=context)],
-        [t("btn_back_main", update=update, context=context)],
-    ]
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=False)
 
 class BirthdaysHandler:
     def __init__(self, users: UsersRepo, friends: FriendsRepo, groups: GroupsRepo):
@@ -136,7 +126,7 @@ class BirthdaysHandler:
         if not merged:
             await update.message.reply_text(
                 t("birthdays_empty", update=update, context=context),
-                reply_markup=_wishlist_menu_kb(update=update, context=context),
+                reply_markup=birthdays_wishlist_kb(update=update, context=context),
             )
             return
 
@@ -166,4 +156,4 @@ class BirthdaysHandler:
 
             lines.append(f"{icon} {name} — {bd} ({when}){badge_str}{groups_note}")
 
-        await update.message.reply_text("\n".join(lines), reply_markup=_wishlist_menu_kb(update=update, context=context))
+        await update.message.reply_text("\n".join(lines), reply_markup=birthdays_wishlist_kb(update=update, context=context))

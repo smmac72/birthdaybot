@@ -3,10 +3,8 @@ from __future__ import annotations
 from telegram import ReplyKeyboardMarkup
 from .i18n import t
 
-
 def _kb(rows: list[list[str]]) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=False)
-
 
 # ----- main menu -----
 def main_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
@@ -17,7 +15,6 @@ def main_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
             [t("btn_about", update=update, context=context)],
         ]
     )
-
 
 # ----- groups -----
 def groups_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
@@ -38,7 +35,6 @@ def group_mgmt_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
         ]
     )
 
-
 # ----- friends -----
 def friends_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
     return _kb(
@@ -47,7 +43,6 @@ def friends_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
             [t("btn_back_main", update=update, context=context)],
         ]
     )
-
 
 # ----- settings -----
 def settings_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
@@ -58,7 +53,6 @@ def settings_menu_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
             [t("btn_back_main", update=update, context=context)],
         ]
     )
-
 
 # ----- about / donate -----
 def about_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
@@ -71,9 +65,8 @@ def about_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
     )
 
 # single cancel keyboard (used inside convs)
-def cancel_kb(*, context=None) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup([[t("btn_cancel", context=context)]], resize_keyboard=True, one_time_keyboard=True)
-
+def cancel_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([[t("btn_cancel", update=update, context=context)]], resize_keyboard=True, one_time_keyboard=True)
 
 # ----- birthdays nested: wishlist -----
 def birthdays_wishlist_kb(*, update=None, context=None) -> ReplyKeyboardMarkup:

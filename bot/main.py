@@ -57,7 +57,6 @@ from .i18n import t, btn_regex
 from .adminbot.repo import AdminRepo
 
 
-# ----------------- logging -----------------
 def _setup_logging() -> None:
     level = getattr(logging, (config.LOG_LEVEL or "INFO").upper(), logging.INFO)
     logging.basicConfig(
@@ -68,7 +67,6 @@ def _setup_logging() -> None:
     logging.getLogger("telegram").setLevel(logging.WARNING)
 
 
-# ----------------- repos -----------------
 def _build_repos() -> Tuple[UsersRepo, GroupsRepo, FriendsRepo, WishlistRepo]:
     db_path = config.DB_PATH
     users = UsersRepo(db_path)
@@ -78,7 +76,6 @@ def _build_repos() -> Tuple[UsersRepo, GroupsRepo, FriendsRepo, WishlistRepo]:
     return users, groups, friends, wishlist
 
 
-# ----------------- helpers -----------------
 def _is_admin(update: Update) -> bool:
     try:
         uid = update.effective_user.id
@@ -101,20 +98,17 @@ async def _broadcast_key_to_all(app: Application, users_repo: UsersRepo, key: st
     return sent
 
 
-# ----------------- UI helpers -----------------
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await (update.effective_message or update.message).reply_text(
         t("main_menu_title"),
-        reply_markup=main_menu_kb(context=context),
+        reply_markup=main_menu_kb(update=update, context=context),
     )
 
 
-# ----------------- errors -----------------
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.getLogger("birthdaybot").exception("unhandled error", exc_info=context.error)
 
 
-# ----------------- test command -----------------
 async def alert_test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     app = context.application
     notif: NotifService = app.bot_data.get("notif_service")  # type: ignore
@@ -133,13 +127,10 @@ async def alert_test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"test: sent {sent}.")
 
 
-# ----------------- maintenance guard -----------------
 async def maintenance_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     maint = context.application.bot_data.get("maintenance") or {}
     if not maint.get("enabled"):
-        return  # pass through
-
-    # admins bypass
+        return
     if _is_admin(update):
         return
 
@@ -155,10 +146,10 @@ async def maintenance_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         cd[mem_key] = True
 
-    raise ApplicationHandlerStop
+    from telegram.ext import ApplicationHandlerStop as Stop
+    raise Stop
 
 
-# ----------------- admin events polling -----------------
 async def _process_admin_events(context: ContextTypes.DEFAULT_TYPE):
     app = context.application
     users_repo: UsersRepo = app.bot_data["users_repo"]
@@ -219,7 +210,6 @@ async def _process_admin_events(context: ContextTypes.DEFAULT_TYPE):
         pass
 
 
-# ----------------- build application -----------------
 def build_application() -> Application:
     _setup_logging()
     log = logging.getLogger("birthdaybot")
@@ -245,8 +235,10 @@ def build_application() -> Application:
     birthdays_handler = BirthdaysHandler(users_repo, friends_repo, groups_repo)
     wishlist_handler = WishlistHandler(users_repo, wishlist_repo)
 
-    app.add_error_handler(on_error)
+    # 👇 важно: ссылка для возврата из вишлиста по «Отмена»
+    app.bot_data["birthdays_handler"] = birthdays_handler
 
+    app.add_error_handler(on_error)
     app.add_handler(MessageHandler(filters.ALL, maintenance_guard), group=-100)
 
     # /start
@@ -254,12 +246,8 @@ def build_application() -> Application:
         ConversationHandler(
             entry_points=[CommandHandler("start", start_handler.start)],
             states={
-                AWAITING_LANG_PICK: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.lang_pick_entered)
-                ],
-                AWAITING_REGISTRATION_BDAY: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.reg_bday_entered)
-                ],
+                AWAITING_LANG_PICK: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.lang_pick_entered)],
+                AWAITING_REGISTRATION_BDAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_handler.reg_bday_entered)],
             },
             fallbacks=[],
             name="conv_start_reg",
@@ -268,7 +256,7 @@ def build_application() -> Application:
         group=0,
     )
 
-    # Birthdays
+    # Birthdays root
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_birthdays")), birthdays_handler.menu_entry), group=0)
 
     # Groups
@@ -331,12 +319,11 @@ def build_application() -> Application:
         group=2,
     )
 
+    # Wishlist
     for ch in wishlist_handler.conversation_handlers():
         app.add_handler(ch, group=1)
-
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_my")), wishlist_handler.my_list), group=1)
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_edit")), wishlist_handler.edit_start), group=1)
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_view")), wishlist_handler.view_start), group=1)
+    # ВАЖНО: не добавляем отдельные handlers для btn_wishlist_edit/view — они уже entry_points разговоров.
 
     # About / donations
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_about")), about_handler.menu_entry), group=3)
@@ -359,7 +346,6 @@ def build_application() -> Application:
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, log_incoming), group=99)
 
-    # post-init
     async def _post_init(application: Application):
         if getattr(application, "job_queue", None) is None:
             log.info("job queue not available, skipping schedule")
@@ -392,7 +378,6 @@ def build_application() -> Application:
             log.exception("post-init failed: %s", e)
 
     app.post_init = _post_init
-
     return app
 
 
