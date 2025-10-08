@@ -13,6 +13,7 @@ from telegram.ext import (
     CommandHandler,
     filters,
 )
+from telegram.constants import ParseMode
 
 from ..db.repo_users import UsersRepo
 from ..keyboards import main_menu_kb
@@ -25,6 +26,7 @@ from ..i18n import (
     current_lang,
     language_label,
 )
+
 
 log = logging.getLogger("start")
 
