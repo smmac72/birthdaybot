@@ -47,10 +47,6 @@ def cancel_kb(*, update=None, context=None):
     return _kb([[t("btn_cancel", update=update, context=context)]])
 
 
-def back_cancel_kb(*, update=None, context=None):
-    return _kb([[t("btn_back", update=update, context=context), t("btn_cancel", update=update, context=context)]])
-
-
 def _parse_price_number(s: Optional[str]) -> float:
     """
     Try to extract a numeric value from a price string.
@@ -106,7 +102,7 @@ def _sort_items_by_price(items: List[Dict]) -> List[Dict]:
 
 
 class WishlistHandler:
-    def __init__(self, users: UsersRepo, wishlist: WishlistRepo):
+    def __init__(self, wishlist: WishlistRepo, users: UsersRepo):
         self.wishlist = wishlist
         self.users = users
 
@@ -148,8 +144,7 @@ class WishlistHandler:
         text = (update.message.text or "").strip()
 
         if text == t("btn_back", update=update, context=context):
-            # Return to birthdays (outer menu will handle back)
-            from .birthdays import BirthdaysHandler  # lazy import OK
+            from .birthdays import BirthdaysHandler  # lazy import
             bh = context.application.bot_data.get("birthdays_handler")
             if bh:
                 await bh.menu_entry(update, context)
@@ -158,7 +153,7 @@ class WishlistHandler:
         if text == t("btn_wishlist_add", update=update, context=context):
             await update.message.reply_text(
                 t("wishlist_add_title", update=update, context=context),
-                reply_markup=back_cancel_kb(update=update, context=context),
+                reply_markup=cancel_kb(update=update, context=context),
             )
             return W_ADD_TITLE
 
@@ -185,7 +180,7 @@ class WishlistHandler:
             lines.append(t("wishlist_del_prompt", update=update, context=context))
             await update.message.reply_text(
                 "\n".join(lines),
-                reply_markup=back_cancel_kb(update=update, context=context),
+                reply_markup=cancel_kb(update=update, context=context),
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=False,
             )
@@ -202,7 +197,7 @@ class WishlistHandler:
 
     async def add_title(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (update.message.text or "").strip()
-        if text in (t("btn_back", update=update, context=context), t("btn_cancel", update=update, context=context)):
+        if text == t("btn_cancel", update=update, context=context):
             await update.message.reply_text(
                 t("canceled", update=update, context=context),
                 reply_markup=wishlist_edit_kb(update=update, context=context),
@@ -212,28 +207,20 @@ class WishlistHandler:
         if not text:
             await update.message.reply_text(
                 t("wishlist_add_title_bad", update=update, context=context),
-                reply_markup=back_cancel_kb(update=update, context=context),
+                reply_markup=cancel_kb(update=update, context=context),
             )
             return W_ADD_TITLE
 
         context.user_data["__wl_new"] = {"title": text, "url": None, "price": None}
         await update.message.reply_text(
             t("wishlist_add_url", update=update, context=context),
-            reply_markup=_kb([
-                [t("btn_skip", update=update, context=context)],
-                [t("btn_back", update=update, context=context), t("btn_cancel", update=update, context=context)],
-            ]),
+            reply_markup=_kb([[t("btn_skip", update=update, context=context)],
+                              [t("btn_cancel", update=update, context=context)]]),
         )
         return W_ADD_URL
 
     async def add_url(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (update.message.text or "").strip()
-        if text == t("btn_back", update=update, context=context):
-            await update.message.reply_text(
-                t("wishlist_add_title", update=update, context=context),
-                reply_markup=back_cancel_kb(update=update, context=context),
-            )
-            return W_ADD_TITLE
         if text == t("btn_cancel", update=update, context=context):
             context.user_data.pop("__wl_new", None)
             await update.message.reply_text(
@@ -241,29 +228,19 @@ class WishlistHandler:
                 reply_markup=wishlist_edit_kb(update=update, context=context),
             )
             return W_EDIT_PICK
+
         if text != t("btn_skip", update=update, context=context):
             context.user_data.setdefault("__wl_new", {})["url"] = text
 
         await update.message.reply_text(
             t("wishlist_add_price", update=update, context=context),
-            reply_markup=_kb([
-                [t("btn_skip", update=update, context=context)],
-                [t("btn_back", update=update, context=context), t("btn_cancel", update=update, context=context)],
-            ]),
+            reply_markup=_kb([[t("btn_skip", update=update, context=context)],
+                              [t("btn_cancel", update=update, context=context)]]),
         )
         return W_ADD_PRICE
 
     async def add_price(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (update.message.text or "").strip()
-        if text == t("btn_back", update=update, context=context):
-            await update.message.reply_text(
-                t("wishlist_add_url", update=update, context=context),
-                reply_markup=_kb([
-                    [t("btn_skip", update=update, context=context)],
-                    [t("btn_back", update=update, context=context), t("btn_cancel", update=update, context=context)],
-                ]),
-            )
-            return W_ADD_URL
         if text == t("btn_cancel", update=update, context=context):
             context.user_data.pop("__wl_new", None)
             await update.message.reply_text(
@@ -271,6 +248,7 @@ class WishlistHandler:
                 reply_markup=wishlist_edit_kb(update=update, context=context),
             )
             return W_EDIT_PICK
+
         if text != t("btn_skip", update=update, context=context):
             context.user_data.setdefault("__wl_new", {})["price"] = text
 
@@ -301,12 +279,6 @@ class WishlistHandler:
 
     async def del_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (update.message.text or "").strip()
-        if text == t("btn_back", update=update, context=context):
-            await update.message.reply_text(
-                t("wishlist_edit_pick", update=update, context=context),
-                reply_markup=wishlist_edit_kb(update=update, context=context),
-            )
-            return W_EDIT_PICK
         if text == t("btn_cancel", update=update, context=context):
             await update.message.reply_text(
                 t("canceled", update=update, context=context),
@@ -330,7 +302,7 @@ class WishlistHandler:
         if not target_db_id:
             await update.message.reply_text(
                 t("wishlist_del_bad", update=update, context=context),
-                reply_markup=back_cancel_kb(update=update, context=context),
+                reply_markup=cancel_kb(update=update, context=context),
             )
             return W_DEL_ID
 
@@ -352,18 +324,12 @@ class WishlistHandler:
     async def view_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             t("wishlist_view_prompt", update=update, context=context),
-            reply_markup=back_cancel_kb(update=update, context=context),
+            reply_markup=cancel_kb(update=update, context=context),
         )
         return W_VIEW_OTHER
 
     async def view_wait(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (update.message.text or "").strip()
-        if text == t("btn_back", update=update, context=context):
-            await update.message.reply_text(
-                t("wishlist_open_menu", update=update, context=context),
-                reply_markup=wishlist_menu_kb(update=update, context=context),
-            )
-            return ConversationHandler.END
         if text == t("btn_cancel", update=update, context=context):
             await update.message.reply_text(
                 t("canceled", update=update, context=context),
@@ -391,7 +357,7 @@ class WishlistHandler:
         if not target_id:
             await update.message.reply_text(
                 t("wishlist_view_not_found", update=update, context=context),
-                reply_markup=back_cancel_kb(update=update, context=context),
+                reply_markup=cancel_kb(update=update, context=context),
             )
             return W_VIEW_OTHER
 
