@@ -249,6 +249,15 @@ def build_application() -> Application:
 
     app.add_handler(MessageHandler(filters.ALL, maintenance_guard), group=-100)
 
+    # birthdays screen
+    async def show_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        from .handlers.birthdays import BirthdaysHandler
+        bh = context.application.bot_data.get("birthdays_handler")
+        if not bh:
+            bh = BirthdaysHandler(users_repo, friends_repo, groups_repo)
+            context.application.bot_data["birthdays_handler"] = bh
+        await bh.menu_entry(update, context)
+
     # /start
     app.add_handler(
         ConversationHandler(
@@ -331,12 +340,14 @@ def build_application() -> Application:
         group=2,
     )
 
+    # wishlist wiring (nested under birthdays)
+    # direct actions
+    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_my")), wishlist_handler.my_list), group=0)
+    # conversations
     for ch in wishlist_handler.conversation_handlers():
-        app.add_handler(ch, group=1)
-
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_my")), wishlist_handler.my_list), group=1)
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_edit")), wishlist_handler.edit_start), group=1)
-    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_wishlist_view")), wishlist_handler.view_start), group=1)
+        app.add_handler(ch, group=0)
+    # back to birthdays from nested menu
+    app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_back")), show_birthdays), group=0)
 
     # About / donations
     app.add_handler(MessageHandler(filters.Regex(btn_regex("btn_about")), about_handler.menu_entry), group=3)
